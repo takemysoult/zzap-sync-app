@@ -237,7 +237,11 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
   offline 1C never drops a previously-chosen warehouse/price type.
 
 ### Still open (later phases)
-- Process model nuance: APScheduler in the tray app vs an extra Windows Task backstop (Phase 4).
+- **Phase 4 process model — DECIDED (2026-06-23):** APScheduler **inside the app**, minimized to
+  the **system tray** (NOT the Windows Task Scheduler, NOT a hybrid). Must include **offline
+  recovery**: on start/tick, missed runs (PC was off — detect via state.json `last_success` /
+  `run_history` vs the interval) run immediately, and pending files (network was down) flush as
+  soon as the connection returns — so after a power/internet outage everything uploads at once.
 - Multi-cabinet / multi-1C-connection UX (schema already supports multiple rows; Phase 7).
 - Duplicate-across-warehouses detection UX (Phase 2 detector ✅ + Phase 3 banner).
 - **Phase 1 + first real ZZap POST still need live validation** against cabinet #1 (real

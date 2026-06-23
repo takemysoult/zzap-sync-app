@@ -200,12 +200,37 @@ together with Phase 1 live validation.
 **Exit met (config/run):** a non-technical user can configure connection/cabinets/cells and run
 a cell from the UI without touching files. (Full live exercise pairs with Phase 1/2 validation.)
 
-### Phase 4 — Scheduler & background
-- APScheduler interval job from settings; coalescing + misfire grace for catch-up.
-- System tray: run in background, show next run, last results, quick "run now", open window.
-- Autostart with Windows (per-user).
-**Exit:** app uploads on schedule while minimized to tray; survives sleep/wake; honors interval
-changes live.
+### Phase 4 — Scheduler & background (system tray)
+**Модель выбрана (2026-06-23): планировщик ВНУТРИ приложения + системный трей** (НЕ Планировщик
+заданий Windows). RU UI, safety-first, без бизнес-логики в планировщике (reuse `CellRunner`).
+- **APScheduler внутри приложения** — интервальная задача из настроек (`interval_hours`),
+  **coalescing + misfire grace**, чтобы пропуски при сне/выключении отрабатывались один раз при
+  возобновлении (а не лавиной). Каждый тик: `run_all_enabled` (или по ячейке) + проход досыла.
+- **Системный трей** (`QSystemTrayIcon`): работа в фоне, окно **сворачивается в трей** (а не
+  выходит); меню (RU): время следующего запуска, итог последних загрузок, «Запустить сейчас»
+  (все/ячейка), «Открыть окно», «Выход»; уведомления о результатах (RU).
+- **Автозапуск с Windows** (per-user, `HKCU\...\Run`) — стартует свёрнутым в трей; вкл/выкл из
+  Настроек добавляет/убирает запись.
+- **Офлайн-восстановление и досыл после сбоя** (отключили свет/интернет → как появятся, всё
+  уходит СРАЗУ):
+  - *Пропущенные запуски* (ПК был выключен/спал): при старте и на каждом тике сверять время
+    последней успешной выгрузки (state.json / `run_history`) с интервалом; если просрочено —
+    выполнить **немедленно** (catch-up), не дожидаясь следующего планового тика.
+  - *Неудачные отправки* (не было сети в момент выгрузки): файл уже откладывается в pending
+    (`CellRunner.mark_pending`). Частый проход **flush pending** + повтор при восстановлении сети
+    дошлёт отложенное **сразу**, как только связь вернётся (`RESEND_OK`).
+  - *Офлайн-проверка «было ли отправление»*: по журналу/состоянию ячейки (`last_success`,
+    наличие pending) видно, ушла загрузка или нет — без обращения к ZZap. (Онлайн-подтверждение
+    числа опубликованных строк через `GET /stat/prices` — опционально позже, Phase 5.)
+  - Перед боевой отправкой — лёгкая проверка доступности сети, чтобы не плодить лишние FAIL;
+    авто-повтор pending по таймеру/при появлении сети.
+- **Живое изменение интервала:** сохранение нового интервала в Настройках перепланирует задачу
+  без перезапуска; UI отражает состояние планировщика (работает / следующий запуск).
+- **Тесты:** логика планирования/перепланирования и автозапуска — с мокнутыми таймерами/реестром
+  (без реальных таймеров и без живого 1С/ZZap); офлайн-catch-up проверяется по state/run_history.
+**Exit:** приложение выгружает по расписанию свёрнутым в трей; переживает сон/выключение и обрыв
+сети — пропущенные и отложенные выгрузки уходят сразу при возобновлении; уважает глобальный
+staging-стоп-кран; стартует с Windows; интервал меняется на лету.
 
 ### Phase 5 — Reliability, security, UX polish
 - Robust error surfacing (toasts/notifications), retry/pending UX, log rotation.

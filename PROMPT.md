@@ -86,11 +86,13 @@ via `getpass` in a helper, or via the GUI password field). Two paths now exist �
   articles** matching the old CLI at `C:\Users\Admin\Desktop\zzap`).
 Update `ROADMAP.md` Phase 1 → ✅ and the Phase 2 live-send → ✅ when validated.
 
-### B. Phase 4 — Scheduler & background (tray). Architect specs; implement; review.
-Config-driven, RU UI, safety-first. **Reuse `CellRunner` — no business logic in the scheduler/tray.**
+### B. Phase 4 — Scheduler & background (system tray). Architect specs; implement; review.
+**Model decided by the user (2026-06-23): APScheduler INSIDE the app + system tray — NOT the
+Windows Task Scheduler.** Config-driven, RU UI, safety-first. **Reuse `CellRunner` — no business
+logic in the scheduler/tray.**
 - **APScheduler** interval job built from the `interval_hours` setting (default 5). Enable
-  **coalescing + a misfire grace** so missed runs (PC asleep/off) run when possible (catch-up).
-  Each tick runs `run_all_enabled` (or per-cell), plus a `retry_pending` flush pass.
+  **coalescing + a misfire grace** so missed runs (PC asleep/off) fire once on resume (not a
+  flood). Each tick runs `run_all_enabled` (or per-cell), plus a `retry_pending` flush pass.
 - **Threading/DB:** every run opens its **own `Database`** on the worker (DAL is thread-affine;
   WAL makes it safe) — mirror `app/gui/screens/cells.py:_run_one`/`_run_all`. COM runs off the
   UI thread. Respect the **global staging kill-switch** and per-cell staging (CellRunner already
@@ -98,15 +100,30 @@ Config-driven, RU UI, safety-first. **Reuse `CellRunner` — no business logic i
 - **System tray** (`QSystemTrayIcon`): run minimized to tray; menu (RU) = next run time, last
   results summary, «Запустить сейчас» (all / pick a cell), «Открыть окно», «Выход». Close-to-tray
   (not quit) with a first-time RU hint. Surface run outcomes as tray notifications (RU).
+- **Offline recovery / catch-up after an outage** (power or internet cut → on resume everything
+  uploads IMMEDIATELY — explicit user requirement):
+  - *Missed scheduled runs* (PC was off/asleep): on startup AND each tick, compare the last
+    successful upload time (state.json / `run_history`) against the interval; if overdue, run
+    **immediately** (catch-up) instead of waiting for the next planned tick.
+  - *Failed sends* (no network at upload time): the file is already staged to pending
+    (`CellRunner.mark_pending`). A frequent **flush-pending** pass + retry-on-reconnect re-sends
+    it **as soon as the network returns** (`RESEND_OK`).
+  - *Offline "did it send?" check*: derive it from the cell's journal/state (`last_success`,
+    presence of pending) — no ZZap round-trip. (Online published-row confirmation via
+    `GET /stat/prices` stays optional, Phase 5.)
+  - A light network-reachability check before a real POST (avoid spurious FAILs) + a periodic
+    pending-retry timer.
 - **Live interval changes:** when the user saves a new interval in Настройки, reschedule the job
   without restart. Reflect scheduler state (running / next run) in the UI.
 - **Autostart with Windows (per-user):** wire the existing `autostart` setting to a per-user
-  **HKCU\...\Run** registry entry (or a per-user Scheduled Task). Toggling it on/off in Настройки
-  adds/removes the entry. Launch minimized to tray on autostart.
-- **Tests:** unit-test the schedule/reschedule logic and autostart enable/disable with the
-  registry/scheduler mocked (no real timers, no real 1C/ZZap). Keep the suite green & offline.
-**Exit:** the app uploads on schedule while minimized to tray, survives sleep/wake, honors
-interval changes live, never publishes when staging is on, and can start with Windows.
+  **HKCU\Software\Microsoft\Windows\CurrentVersion\Run** entry. Toggling it in Настройки
+  adds/removes the entry; launch minimized to tray on autostart.
+- **Tests:** unit-test schedule/reschedule, the offline catch-up decision (overdue → run now,
+  driven by state/run_history), and autostart enable/disable — with timers/registry/scheduler
+  mocked (no real timers, no live 1C/ZZap). Keep the suite green & offline.
+**Exit:** the app uploads on schedule while minimized to tray; survives sleep/wake and a network
+outage — missed and pending uploads go out immediately on resume; never publishes when staging is
+on; honors interval changes live; starts with Windows.
 
 ### C. (Optional, if time) Phase 5 polish
 Error toasts/notifications (RU), retry/pending UX, log rotation, ZZap 4xx → clear RU messages,
