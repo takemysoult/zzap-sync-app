@@ -1,0 +1,18 @@
+[project]
+name = "zzap-sync-app"
+version = "0.1.0"
+description = "Windows desktop app that syncs 1C price lists to ZZap on a schedule"
+requires-python = ">=3.12"
+
+# This project is run from source (and packaged with PyInstaller); it is not
+# distributed as a wheel, so dependencies live in requirements*.txt rather than here.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Make the project root importable so `import engine` / `import app` work without
+# an editable install. (pytest >= 7 honours `pythonpath`.)
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

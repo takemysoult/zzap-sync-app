@@ -1,0 +1,20 @@
+# Runtime dependencies for the ZZap Sync desktop app (Windows, Python 3.12 x64).
+#
+# Install into the project's 64-bit venv:
+#   py -3.12 -m venv .venv
+#   .venv\Scripts\python -m pip install -r requirements.txt
+#
+# NOTE: bitness must match the installed 1C platform (x64). Do NOT use a 32-bit venv.
+
+# --- GUI ---
+PySide6>=6.7
+
+# --- Scheduler (interval jobs, misfire grace, coalescing for catch-up) ---
+APScheduler>=3.10,<4
+
+# --- Engine: ZZap REST upload + XLSX building ---
+requests>=2.31
+openpyxl>=3.1
+
+# --- Windows integration: COM (win32com) to 1C + DPAPI (win32crypt) for secrets ---
+pywin32>=306 ; platform_system == "Windows"

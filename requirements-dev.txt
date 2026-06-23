@@ -1,0 +1,9 @@
+# Development / test / packaging dependencies.
+#   .venv\Scripts\python -m pip install -r requirements-dev.txt
+-r requirements.txt
+
+# --- Tests ---
+pytest>=8.0
+
+# --- Packaging (Phase 6) ---
+pyinstaller>=6.3

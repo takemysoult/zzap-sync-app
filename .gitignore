@@ -1,0 +1,47 @@
+# --- Python virtual environments ---
+.venv/
+.venv32/
+venv/
+env/
+
+# --- Python bytecode / caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Build / packaging artifacts ---
+build/
+dist/
+*.spec
+
+# --- Application runtime data (machine-specific, may contain real data) ---
+*.db
+*.sqlite
+*.sqlite3
+*.xlsx
+*.log
+pending/
+state.json
+
+# --- Secrets: NEVER commit ---
+# 1C passwords and ZZap API keys live encrypted in the local SQLite store only.
+# NOTE: do not use a broad `secrets.*` glob — it would swallow app/security/secrets.py.
+config.ini
+*.key
+*.pem
+.env
+secrets.json
+secrets.yaml
+secrets.yml
+secrets.txt
+
+# --- OS / editor cruft ---
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/
