@@ -197,6 +197,15 @@ changes live.
 - Robust error surfacing (toasts/notifications), retry/pending UX, log rotation.
 - Secret handling review; least-privilege 1C user guidance; optional HTTPS notes for OData.
 - Edge cases: locked files, partial 1C data, ZZap 4xx mapping to clear messages.
+- **Post-upload publish confirmation (optional, `GET /api/client/v1/stat/prices`)**: the
+  only extra ZZap method worth adding later. After a successful upload, read back the number
+  of *published* rows for the cell's `code_templ` and show it in the cell status — confirming
+  the template was replaced, without the user opening the cabinet. Pairs with the §4 note
+  that ZZap dedups server-side, so published < sent is normal (e.g. sent 4092 → published
+  ~3976); surfacing both numbers makes that expected gap visible instead of alarming.
+  Treat the endpoint as a *candidate* until its response shape is verified against the live
+  cabinet (header `zzap-api-key`, same as upload); keep it non-blocking (a stat-read failure
+  must never turn a successful `OK` upload into a `FAIL`).
 **Exit:** unattended for days without intervention; clear diagnostics when something breaks.
 
 ### Phase 6 — Packaging & delivery
