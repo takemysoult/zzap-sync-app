@@ -18,6 +18,10 @@ A **cell** is one upload job. Fields:
 - **Warehouse(s)** — chosen from a dropdown populated **live from 1C** (single or multi-select).
 - **Price type** — chosen from a dropdown populated **live from 1C**.
 - **Enabled** toggle, plus optional per-cell exclusions / column layout overrides.
+- **Exclusions** — a per-cell list of article numbers NOT to upload. The user can type
+  them OR **import from an Excel file (`.xlsx` / `.xls`)** (choose a column, optional
+  header skip; articles normalized trim+upper, deduped). Stored as an `exclusion_list`
+  the cell references; applied via `apply_exclusions` at run time.
 
 At each scheduled tick the app runs every enabled cell:
 `build 1C query (warehouses + price type) → fetch rows → apply exclusions →
@@ -49,6 +53,9 @@ ZZap cabinet manually; the app shows the per-template checklist from PROJECT_MEM
   Task as a resiliency backstop.
 - **Engine:** reuse/extract `zzapsync` from the old project into an `engine/` package
   (COM source, transform, zzap_client, delivery). Keep it UI-agnostic and unit-testable.
+  - **Source = COM** (confirmed 2026-06-23). OData stays a future/secondary path only.
+  - Excel exclusions import needs **openpyxl** (`.xlsx`, already a dep) + **xlrd>=2.0.1**
+    (`.xls`). xlrd 2.x reads only `.xls`; branch on file extension.
 - **Config/data store:** **SQLite** (cells, cabinets, settings, run history) via a thin DAL.
   Small and queryable; JSON is acceptable for v0 but SQLite scales to history/logs.
 - **Secrets:** **Windows DPAPI** (`win32crypt`) or `keyring` — never store 1C password or
@@ -143,8 +150,12 @@ defaults enforced.
 - Multi-cell run; per-cell run_history; pending/retry; staging mode.
 - **Duplicate-across-warehouses detector**: warn when two enabled cells of the same cabinet
   can emit the same article (so the user avoids ZZap duplicates).
+- **Exclusions import from Excel (`.xlsx` / `.xls`)**: a pure engine reader
+  (`.xlsx` via openpyxl read-only, `.xls` via xlrd) that extracts article numbers from a
+  chosen column (optional header skip), feeding a cell's `exclusion_list`. Unit-tested with
+  a generated workbook fixture; no formula evaluation, read-only.
 **Exit:** a configured set of cells uploads correctly (staging first, then real) and records
-per-cell history; failures stage and retry.
+per-cell history; failures stage and retry; an Excel exclusions file imports and is applied.
 
 ### Phase 3 — GUI
 - Connection screen (enter 1C creds, "Test connection", save encrypted).
