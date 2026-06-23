@@ -1,18 +1,23 @@
-"""Чтение прайс-листа из 1С через внешнее COM-соединение (Windows).
+"""Чтение данных из 1С через внешнее COM-соединение (Windows).
 
 Требует установленную платформу 1С той же разрядности, что и Python (x64),
-и пакет pywin32. Запрос на языке 1С (ComConfig.query) должен возвращать ровно
-5 колонок в порядке: Производитель, Номер, Наименование, Количество, Цена.
+и пакет pywin32.
 
 КРИТИЧНО (PROJECT_MEMORY §1):
   - COM апартаментно-потоковый: поток, работающий с COM, сам вызывает
     CoInitialize/CoUninitialize. Длинные запросы — на рабочем потоке, не на UI.
   - Перед CoUninitialize обнуляем все COM-объекты и делаем gc.collect(), иначе
     их финализация после деинициализации COM роняет процесс (segfault).
+
+`Com1C` — контекст-менеджер одного соединения: открывает (CoInitialize + Connect),
+позволяет выполнить произвольное число запросов, и в __exit__ делает безопасный
+teardown. На нём построены и выгрузка прайса (ComPriceSource), и разведка
+справочников (ConnectionManager).
 """
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from ..config import ComConfig
@@ -36,13 +41,86 @@ def _to_str(value: Any) -> str:
     return str(value).strip()
 
 
+class Com1C:
+    """A single 1C external (COM) connection as a context manager.
+
+    Usage::
+
+        with Com1C(conn_string, progid) as c:
+            rows = c.query(text, columns=5)
+
+    `query` returns a list of tuples (one per result row), each with `columns`
+    primitive Python values via `Selection.Get(i)`. The teardown nulls COM objects
+    and gc-collects before CoUninitialize (segfault-safe).
+    """
+
+    def __init__(self, conn_string: str, progid: str = "V83.COMConnector") -> None:
+        self.conn_string = conn_string
+        self.progid = progid
+        self._connector = None
+        self._conn = None
+        self._pythoncom = None
+        self._initialized = False
+
+    def __enter__(self) -> "Com1C":
+        try:
+            import pythoncom
+            import win32com.client.dynamic
+        except ImportError as e:  # pragma: no cover - зависит от окружения
+            raise RuntimeError(
+                "Для COM-соединения нужен pywin32 (Windows). Установите: pip install pywin32"
+            ) from e
+
+        self._pythoncom = pythoncom
+        pythoncom.CoInitialize()
+        self._initialized = True
+        try:
+            log.info("COM: подключаюсь к 1С через %s ...", self.progid)
+            # dynamic.Dispatch — позднее связывание через IDispatch (надёжно для 1С).
+            self._connector = win32com.client.dynamic.Dispatch(self.progid)
+            self._conn = self._connector.Connect(self.conn_string)
+        except BaseException:
+            # При сбое подключения всё равно делаем безопасный teardown.
+            self.__exit__(*sys.exc_info())
+            raise
+        return self
+
+    def query(self, text: str, columns: int) -> list[tuple]:
+        if self._conn is None:
+            raise RuntimeError("Нет активного соединения 1С.")
+        q = sel = None
+        try:
+            q = self._conn.NewObject("Query")
+            q.Text = text
+            sel = q.Execute().Select()
+            rows: list[tuple] = []
+            while sel.Next():
+                rows.append(tuple(sel.Get(i) for i in range(columns)))
+            log.info("COM: запрос вернул строк: %d", len(rows))
+            return rows
+        finally:
+            # Освобождаем COM-объекты запроса до выхода/следующего запроса.
+            sel = q = None
+
+    def __exit__(self, *exc) -> bool:
+        import gc
+
+        # Освобождаем COM-объекты ДО CoUninitialize — иначе их финализация
+        # после деинициализации COM роняет процесс (segfault).
+        self._conn = None
+        self._connector = None
+        gc.collect()
+        if self._initialized and self._pythoncom is not None:
+            self._pythoncom.CoUninitialize()
+            self._initialized = False
+        return False
+
+
 class ComPriceSource:
     """PriceSource backed by a 1C external (COM) connection.
 
-    One instance carries the connection string + query for one cell. `fetch_rows`
-    opens the connection, runs the query, and returns rows — with the segfault-safe
-    teardown. Pure Windows/COM; import of pywin32 is deferred to call time so the
-    module imports cleanly on any platform (and in CI).
+    One instance carries the connection string + query for one cell. Import of
+    pywin32 is deferred (inside Com1C) so the module imports cleanly on any platform.
     """
 
     def __init__(self, cfg: ComConfig) -> None:
@@ -55,49 +133,21 @@ class ComPriceSource:
         if not cfg.query:
             raise ValueError("Не задан текст запроса (ComConfig.query)")
 
-        try:
-            import pythoncom
-            import win32com.client.dynamic
-        except ImportError as e:  # pragma: no cover - зависит от окружения
-            raise RuntimeError(
-                "Для COM-соединения нужен pywin32 (Windows). Установите: pip install pywin32"
-            ) from e
-
-        import gc
-
-        connector = conn = query = result = selection = None
-        pythoncom.CoInitialize()
-        try:
-            log.info("COM: подключаюсь к 1С через %s ...", cfg.progid)
-            # dynamic.Dispatch — позднее связывание через IDispatch (надёжно для 1С).
-            connector = win32com.client.dynamic.Dispatch(cfg.progid)
-            conn = connector.Connect(cfg.conn_string)
-
-            log.info("COM: выполняю запрос...")
-            query = conn.NewObject("Query")
-            query.Text = cfg.query
-            result = query.Execute()
-            selection = result.Select()
-
-            rows: list[PriceRow] = []
-            while selection.Next():
-                rows.append(
-                    PriceRow(
-                        producer=_to_str(selection.Get(0)),
-                        number=_to_str(selection.Get(1)),
-                        name=_to_str(selection.Get(2)),
-                        quantity=_to_number(selection.Get(3)),
-                        price=_to_number(selection.Get(4)),
-                    )
-                )
-            log.info("COM: получено строк: %d", len(rows))
-            return rows
-        finally:
-            # Освобождаем COM-объекты ДО CoUninitialize — иначе их финализация
-            # после деинициализации COM роняет процесс (segfault).
-            selection = result = query = conn = connector = None
-            gc.collect()
-            pythoncom.CoUninitialize()
+        log.info("COM: выполняю запрос прайса...")
+        with Com1C(cfg.conn_string, cfg.progid) as c:
+            raw = c.query(cfg.query, 5)
+        rows = [
+            PriceRow(
+                producer=_to_str(r[0]),
+                number=_to_str(r[1]),
+                name=_to_str(r[2]),
+                quantity=_to_number(r[3]),
+                price=_to_number(r[4]),
+            )
+            for r in raw
+        ]
+        log.info("COM: получено строк прайса: %d", len(rows))
+        return rows
 
 
 def fetch_rows(cfg: ComConfig) -> list[PriceRow]:

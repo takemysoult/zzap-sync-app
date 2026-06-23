@@ -120,13 +120,23 @@ defaults enforced.
 - If DPAPI entropy is later added for defense-in-depth, the DAL must persist/derive it
   consistently or existing blobs become undecryptable.
 
-### Phase 1 — 1C connection & discovery
-- ConnectionManager: connect via COM, validate credentials, friendly errors
-  (no external-connection right, wrong bitness, server unreachable).
-- Fetch warehouses (`Справочник.Склады`) and price types (`Справочник.ВидыЦен`).
-- Dynamic query builder from (warehouses, price type) producing the proven 5-column query.
-**Exit:** given creds, app returns live warehouse & price-type lists; builder query runs and
-returns rows matching the CLI for the same inputs.
+### Phase 1 — 1C connection & discovery  🟡 CODE COMPLETE (2026-06-23, mocked-COM; reviewed: SHIP-WITH-FIXES → fixed)
+- `app/services/connection.py:ConnectionManager` — connect via COM, `test_connection`
+  (never raises; friendly RU errors via `describe_1c_error`), `discover` (warehouses +
+  price types over ONE connection), `build_conn_string` (server/file), `to_com_config`.
+- `engine/query_builder.py` — `build_price_query` (the proven §3 5-col query, values
+  inlined injection-safely) + `build_catalog_names_query` for the dropdowns.
+- `engine/sources/com.py` — extracted `Com1C` context manager (one segfault-safe
+  teardown shared by price-fetch and discovery).
+- Reviewer (Opus): query fidelity and segfault-safe teardown verified correct. Fixed
+  M1 — `error_text` now redacts `Pwd=`/`Usr=` so a connection-string-echoing 1C error
+  can't leak the password into logs/UI (test added). 52 tests pass (mocked COM).
+**Live validation still required before Phase 1 sign-off (needs real 1C creds):**
+- Discovery returns the expected warehouse/price-type lists; the builder query runs and
+  returns rows matching the CLI for the same inputs.
+- Confirm catalog hierarchy: `Справочник.Склады` hierarchical (exclude groups) vs
+  `Справочник.ВидыЦен` flat (no `ЭтоГруппа`). If wrong, `discover()` raises a raw 1C error.
+- Refine `describe_1c_error` heuristics against real 1C/COM error messages.
 
 ### Phase 2 — Cell engine (headless)
 - CellRunner: run one cell end-to-end (query → exclusions → xlsx → upload → journal/state).

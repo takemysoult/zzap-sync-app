@@ -165,6 +165,17 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
 - **Data store:** `app/db` — schema (ROADMAP §4) + DAL + `user_version` migration.
   New cells default to **staging** (`staging_mode=1`) and `enabled=0` (safety).
 
+### Phase 1 (2026-06-23, mocked-COM; live validation deferred)
+- Dynamic query builder lives in `engine/query_builder.py` (`build_price_query` = the §3
+  query with warehouse/price-type values inlined as escaped 1C literals — the engine's COM
+  layer does not bind parameters, same as the CLI).
+- Single COM connection context: `engine/sources/com.py:Com1C` (used by both price-fetch and
+  discovery; segfault-safe teardown lives here now).
+- `ConnectionManager` (`app/services/connection.py`) connects/validates/discovers. Security:
+  `error_text` redacts `Pwd=`/`Usr=` because some 1C COM errors echo the connection string.
+- **Unverified vs live base:** Склады assumed hierarchical (exclude groups), ВидыЦен assumed
+  flat. Confirm on cabinet #1 before relying on the dropdowns.
+
 ### Still open (later phases)
 - Process model nuance: APScheduler in the tray app vs an extra Windows Task backstop (Phase 4).
 - Multi-cabinet / multi-1C-connection UX (schema already supports multiple rows; Phase 7).

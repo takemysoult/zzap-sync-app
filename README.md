@@ -41,5 +41,9 @@ The test suite runs without a live 1C or ZZap (COM and HTTP are behind mockable 
   Never committed; never logged.
 
 ## Status
-**Phase 0 (Foundations) — complete.** Engine extracted + tested, SQLite DAL, DPAPI secrets,
-git baseline. See `ROADMAP.md` §5 for the phase plan. Next: Phase 1 (1C connection & discovery).
+- **Phase 0 (Foundations) — complete.** Engine extracted + tested, SQLite DAL, DPAPI secrets.
+- **Phase 1 (1C connection & discovery) — code complete (mocked-COM).** ConnectionManager,
+  live warehouse/price-type discovery, and the dynamic 5-column query builder, all unit-tested.
+  Live validation against a real 1C base is the remaining Phase 1 sign-off step.
+
+52 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 2 (cell engine).
