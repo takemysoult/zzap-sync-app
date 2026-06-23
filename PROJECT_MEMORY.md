@@ -208,6 +208,34 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
   `#` comments) + `assign_exclusion_list_to_cell`. `apply_exclusions` re-normalizes at run
   time via the same `_norm_article`, so import-time and match-time always agree.
 
+### Phase 3 (2026-06-23, GUI; PySide6; headless smoke-tested offscreen)
+- **Package `app/gui/`**: `app.py`/`__main__.py` (entry `python -m app.gui`), `main_window.py`
+  (tabbed shell), `context.py` (`AppContext`), `workers.py` (`AsyncRunner`), `screens/*`. New
+  `app/paths.py` resolves per-user data: DB + per-cell work dir under `%LOCALAPPDATA%\ZZapSync`
+  (override via `ZZAP_APP_DATA` — tests use it). Only `app.gui.*` imports PySide6; engine/services
+  stay Qt-free.
+- **Threading (the subtle one):** `AsyncRunner.submit` runs the callable on a `QThreadPool`
+  worker and connects the worker's signals to **bound methods of AsyncRunner** (a UI-thread
+  QObject). That matters: Qt AutoConnection picks queued-vs-direct from the *receiver's* thread
+  affinity, so a bound-method receiver on the UI thread ⇒ **queued delivery on the UI thread**.
+  Connecting a signal to a bare lambda/closure instead = *direct* connection = callback runs on
+  the worker thread = touches widgets off-thread = crash. A smoke test asserts the callback's
+  `QThread.currentThread()` is the main thread (it would fail under the bare-closure bug).
+- **DB per worker thread:** the UI thread uses `AppContext.db`; every worker job opens its own
+  `Database` via `AppContext.new_db()` (DAL is thread-affine; WAL + busy_timeout from Phase 2
+  make the connections coexist). "Run now" / "Run all" build a `CellRunner` inside the worker.
+- **Secrets in the UI:** password / API-key fields are `EchoMode.Password`, are **never**
+  loaded back from storage (a placeholder shows a secret is stored), and the stored secret is
+  replaced only if the user types a new value (maps to DAL `update_password` /
+  `update_api_key`). Every worker error reaches the UI through `error_text` (redacts `Pwd=`/`Usr=`).
+- **Safety in the UI:** new cells default to staging + disabled (the `Cell()` model defaults);
+  a Run that would actually POST (global staging OFF *and* cell staging OFF) is confirmed first.
+- **No live ZZap key test:** there is no cheap key-validation method (§4) — a key is proven by
+  the first real upload; the cabinet screen intentionally has no "test key" button.
+- **Discovery cache:** `discover()` (warehouses/price types) runs off-thread and is cached on
+  `AppContext.discovery`; the cell editor merges cached lists with the cell's saved values so an
+  offline 1C never drops a previously-chosen warehouse/price type.
+
 ### Still open (later phases)
 - Process model nuance: APScheduler in the tray app vs an extra Windows Task backstop (Phase 4).
 - Multi-cabinet / multi-1C-connection UX (schema already supports multiple rows; Phase 7).

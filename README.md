@@ -21,7 +21,10 @@ engine/         Pure, UI-agnostic, unit-tested engine (extracted from the proven
 app/            Application layer
   db/             SQLite schema + DAL (cells, cabinets, connections, settings, history)
   security/       DPAPI-encrypted secret storage
-tests/          pytest suite (engine + DAL + secrets; COM and HTTP mocked)
+  services/       ConnectionManager, CellRunner, duplicate detector
+  gui/            PySide6 desktop UI (screens drive the services; no business logic)
+  paths.py        Per-user data locations (DB + per-cell work dir under %LOCALAPPDATA%)
+tests/          pytest suite (engine + DAL + secrets + GUI smoke; COM and HTTP mocked)
 reference/      Legacy CLI blueprints for Phase 1 (not part of the app)
 ```
 
@@ -33,6 +36,11 @@ py -3.12 -m venv .venv
 ```
 
 The test suite runs without a live 1C or ZZap (COM and HTTP are behind mockable seams).
+
+Run the desktop app (from the 64-bit venv):
+```powershell
+.venv\Scripts\python -m app.gui
+```
 
 ## Safety
 - New cells default to **staging** (build the XLSX, do NOT POST). Real uploads require an
@@ -49,6 +57,10 @@ The test suite runs without a live 1C or ZZap (COM and HTTP are behind mockable 
   cell end-to-end with a staging safety gate + pending/retry, the duplicate-across-warehouses
   detector, Excel exclusions import (`.xlsx`/`.xls`), and DAL thread-affinity (WAL). The first
   real ZZap upload is exercised together with Phase 1 live validation.
+- **Phase 3 (GUI) — code complete.** PySide6 desktop app (`app/gui/`): connection, cabinets,
+  cells (with live 1C dropdowns, exclusions import, duplicate banner, per-template checklist),
+  settings, and status/journal screens. All COM/network/CellRunner work runs off the UI thread
+  (a per-thread `Database` in workers); secrets are masked and never reloaded into fields.
 
-78 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 1/2 live validation,
-then Phase 3 (GUI).
+84 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 1/2 live validation,
+then Phase 4 (scheduler + system tray).

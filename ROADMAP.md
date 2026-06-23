@@ -177,14 +177,28 @@ per-cell history; staging is enforced; failures stage and retry; an Excel exclus
 imports and is applied. The first *real* ZZap POST is exercised against the live cabinet
 together with Phase 1 live validation.
 
-### Phase 3 — GUI
-- Connection screen (enter 1C creds, "Test connection", save encrypted).
-- Cabinets screen (name + API key, test key).
-- Cells table: add/edit/delete; warehouse & price-type dropdowns from 1C; code_templ input;
-  per-cell enable; per-template checklist reminder (PROJECT_MEMORY §5); dup warning banner.
-- Settings: interval hours, staging mode, autostart.
-- Status/logs view (run_history + journal tail), "Run now" (one cell / all).
-**Exit:** a non-technical user can configure everything without touching files.
+### Phase 3 — GUI  ✅ CODE COMPLETE (2026-06-23; headless smoke-tested offscreen)
+- `app/gui/` — PySide6 app: a tabbed `MainWindow` over five screens, an `AsyncRunner`
+  (QThreadPool) that runs all blocking work off the UI thread, and `AppContext`
+  (UI-thread `Database` + a fresh per-worker `Database`; caches 1C discovery).
+- Connection screen (enter 1C creds, "Test connection" off-thread, save encrypted).
+- Cabinets screen (name + masked API key + api_url). No live "test key": ZZap has no cheap
+  key-validation method (PROJECT_MEMORY §4), so a key is proven on the first real upload.
+- Cell editor: cabinet/connection pickers, code_templ, warehouse (multi-select) & price-type
+  dropdowns filled live from 1C (`discover`, off-thread, cached + merged with saved values so
+  nothing is lost offline); per-cell enabled + staging toggles (new cells default to staging);
+  exclusions editor with "Импорт исключений из Excel"; per-template checklist (PROJECT_MEMORY §5).
+- Cells table: add/edit/delete; duplicate-risk banner from `find_duplicate_risks` (red =
+  shared warehouse, amber = split); "Run now" (one / all enabled) via CellRunner on a worker
+  thread (its own `Database`), with a confirmation before any real (non-staging) send.
+- Settings: interval hours, the GLOBAL staging kill-switch, autostart.
+- Status/logs view (`run_history` table + per-cell journal tail).
+- **Threading & secrets:** worker results are delivered to bound `AsyncRunner` slots so Qt's
+  AutoConnection becomes a *queued* (UI-thread) delivery; secrets are masked, never reloaded
+  into fields (placeholder + update-only-if-typed), and every worker error is redacted via
+  `error_text`. 6 offscreen smoke tests (incl. a UI-thread-delivery + secret-redaction guard).
+**Exit met (config/run):** a non-technical user can configure connection/cabinets/cells and run
+a cell from the UI without touching files. (Full live exercise pairs with Phase 1/2 validation.)
 
 ### Phase 4 — Scheduler & background
 - APScheduler interval job from settings; coalescing + misfire grace for catch-up.
