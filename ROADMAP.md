@@ -145,17 +145,37 @@ defaults enforced.
   `Справочник.ВидыЦен` flat (no `ЭтоГруппа`). If wrong, `discover()` raises a raw 1C error.
 - Refine `describe_1c_error` heuristics against real 1C/COM error messages.
 
-### Phase 2 — Cell engine (headless)
-- CellRunner: run one cell end-to-end (query → exclusions → xlsx → upload → journal/state).
-- Multi-cell run; per-cell run_history; pending/retry; staging mode.
-- **Duplicate-across-warehouses detector**: warn when two enabled cells of the same cabinet
-  can emit the same article (so the user avoids ZZap duplicates).
-- **Exclusions import from Excel (`.xlsx` / `.xls`)**: a pure engine reader
-  (`.xlsx` via openpyxl read-only, `.xls` via xlrd) that extracts article numbers from a
-  chosen column (optional header skip), feeding a cell's `exclusion_list`. Unit-tested with
-  a generated workbook fixture; no formula evaluation, read-only.
-**Exit:** a configured set of cells uploads correctly (staging first, then real) and records
-per-cell history; failures stage and retry; an Excel exclusions file imports and is applied.
+### Phase 2 — Cell engine (headless)  🟡 CODE COMPLETE (2026-06-23, mocked COM/HTTP; reviewed: SHIP-WITH-FIXES → fixed)
+- `app/services/cell_runner.py:CellRunner` — runs one cell end-to-end
+  (`build_price_query` → `ComPriceSource.fetch_rows` → `clean_rows` → `apply_exclusions`
+  → `build_xlsx(include_header=False)` → `upload_price` → `run_history` + per-cell
+  `Delivery`). Source + uploader are injected so it's tested with no live 1C/ZZap.
+  - **Staging gate:** a real POST happens only when the GLOBAL `staging_mode` setting is
+    OFF *and* the cell's `staging_mode` is OFF; otherwise the file is built and the run is
+    `STAGED`. New cells default to staging.
+  - **Failure model:** an upload that throws stages the file to pending + `FAIL` (retryable
+    via `retry_pending` → `RESEND_OK`); a pre-upload error (config/query/fetch/build), or a
+    failure where even staging the pending file fails, is `ERROR` (nothing to retry).
+  - `run_all_enabled` runs every enabled cell (errors are isolated per cell).
+- **Duplicate-across-warehouses detector** — `app/services/duplicates.py:find_duplicate_risks`
+  flags same-cabinet / different-template enabled cell pairs (shared warehouse = high
+  confidence; disjoint = possible). The GUI (Phase 3) renders these as a banner.
+- **Exclusions import from Excel** — `engine/exclusions.py:read_exclusion_articles`
+  (`.xlsx`/`.xlsm` via openpyxl read-only streaming; `.xls` via xlrd≥2.0.1; numeric cells
+  like `12345.0` → `"12345"`; blanks dropped; optional header skip). DAL
+  `import_exclusion_list` (normalize trim+upper+dedupe via `engine.transform.normalize_articles`,
+  create/replace/append) + `assign_exclusion_list_to_cell`. End-to-end test: import → assign
+  → a CellRunner run actually filters those articles.
+- **DAL thread-affinity** — `Database` now sets `busy_timeout` + `journal_mode=WAL` (file
+  DBs only); open one `Database`/`CellRunner` per worker thread (scheduler-safe for Phase 4).
+- **Carry-over hardening (Phase 0/1 reviewer notes):** end-to-end test that a cabinet's
+  stored `api_url` flows into `ZzapConfig` and the upload POSTs to it; fixed a secret-leak in
+  `error_text` redaction (a `"` in the password is serialized as `""` and was partially
+  leaking). 78 tests pass (mocked COM/HTTP).
+**Exit (headless met; live send pending with Phase 1 live validation):** cells build + record
+per-cell history; staging is enforced; failures stage and retry; an Excel exclusions file
+imports and is applied. The first *real* ZZap POST is exercised against the live cabinet
+together with Phase 1 live validation.
 
 ### Phase 3 — GUI
 - Connection screen (enter 1C creds, "Test connection", save encrypted).

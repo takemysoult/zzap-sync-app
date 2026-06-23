@@ -6,13 +6,22 @@ Secrets (1C password, ZZap API key) are encrypted on write via the injected
 reads return models with a `has_*` flag instead of the secret.
 
 Threading note: a sqlite3 connection is bound to its creating thread. The service
-layer (Phase 2+) opens a `Database` per worker thread rather than sharing one.
+layer (Phase 2+) opens a `Database` per worker thread rather than sharing one (the
+scheduler runs each cell on a worker thread; every worker opens its own Database).
+To make those independent connections coexist on one file we enable WAL +
+busy_timeout: WAL lets a reader and the writer proceed concurrently, and the
+busy_timeout makes a momentary write-lock collision wait-and-retry instead of
+raising "database is locked". Migrations run on the first open (main thread at
+startup) before any worker connects.
 """
 from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
+
+from engine.transform import normalize_articles, parse_exclusions
 
 from ..security.secrets import Cipher, DpapiCipher
 from .models import Cabinet, Cell, Connection1C, ExclusionList, RunHistory
@@ -34,6 +43,12 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         # FK enforcement is per-connection and must be set outside a transaction.
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # Wait (don't raise) up to 5s if another worker thread holds the write lock.
+        self._conn.execute("PRAGMA busy_timeout = 5000")
+        # WAL allows concurrent reader+writer across per-thread connections. It is a
+        # persistent on-disk mode (no-op / unsupported for :memory:), so only file DBs.
+        if self.path != ":memory:":
+            self._conn.execute("PRAGMA journal_mode = WAL")
         self._migrate()
 
     # --- lifecycle --------------------------------------------------------
@@ -213,6 +228,53 @@ class Database:
 
     def delete_exclusion_list(self, list_id: int) -> None:
         self._conn.execute("DELETE FROM exclusion_list WHERE id = ?", (list_id,))
+        self._conn.commit()
+
+    def import_exclusion_list(self, articles: Iterable[object], *,
+                              name: str | None = None, list_id: int | None = None,
+                              append: bool = False) -> int:
+        """Create or update an `exclusion_list` from imported article strings.
+
+        `articles` is a raw iterable (e.g. the output of
+        `engine.exclusions.read_exclusion_articles`). Values are normalized once
+        here (trim+upper, deduped, blanks dropped) via the engine's shared
+        `normalize_articles`, then stored one-per-line. `apply_exclusions`
+        re-normalizes at run time, so storage and matching stay consistent.
+
+        - `list_id is None`           -> create a NEW list (returns its id).
+        - `list_id`, `append=False`   -> replace that list's articles.
+        - `list_id`, `append=True`    -> merge with existing (existing text — incl.
+          any manual `#` comments — is preserved; only genuinely new articles are
+          appended).
+
+        Returns the list id.
+        """
+        new_articles = normalize_articles(articles)
+        if list_id is None:
+            return self.add_exclusion_list(name or "Импорт из Excel",
+                                           "\n".join(new_articles))
+        existing = self.get_exclusion_list(list_id)
+        if existing is None:
+            raise ValueError(f"Список исключений id={list_id} не найден.")
+        if append:
+            already = parse_exclusions(existing.articles)  # normalized set, comments skipped
+            additions = [a for a in new_articles if a not in already]
+            base = existing.articles.rstrip("\n")
+            existing.articles = (
+                base + ("\n" if base and additions else "") + "\n".join(additions)
+                if additions else existing.articles
+            )
+        else:
+            existing.articles = "\n".join(new_articles)
+        if name is not None:
+            existing.name = name
+        self.update_exclusion_list(existing)
+        return list_id
+
+    def assign_exclusion_list_to_cell(self, cell_id: int, list_id: int | None) -> None:
+        """Point a cell at an exclusion list (pass list_id=None to clear it)."""
+        self._conn.execute(
+            "UPDATE cell SET exclusion_list_id = ? WHERE id = ?", (list_id, cell_id))
         self._conn.commit()
 
     # ==================================================================

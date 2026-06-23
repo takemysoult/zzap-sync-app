@@ -15,6 +15,7 @@ APScheduler>=3.10,<4
 # --- Engine: ZZap REST upload + XLSX building ---
 requests>=2.31
 openpyxl>=3.1
+xlrd>=2.0.1   # .xls (old Excel) reading for exclusions import; xlrd 2.x reads only .xls
 
 # --- Windows integration: COM (win32com) to 1C + DPAPI (win32crypt) for secrets ---
 pywin32>=306 ; platform_system == "Windows"

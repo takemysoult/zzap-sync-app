@@ -45,5 +45,10 @@ The test suite runs without a live 1C or ZZap (COM and HTTP are behind mockable 
 - **Phase 1 (1C connection & discovery) — code complete (mocked-COM).** ConnectionManager,
   live warehouse/price-type discovery, and the dynamic 5-column query builder, all unit-tested.
   Live validation against a real 1C base is the remaining Phase 1 sign-off step.
+- **Phase 2 (Cell engine, headless) — code complete (mocked COM/HTTP).** `CellRunner` runs a
+  cell end-to-end with a staging safety gate + pending/retry, the duplicate-across-warehouses
+  detector, Excel exclusions import (`.xlsx`/`.xls`), and DAL thread-affinity (WAL). The first
+  real ZZap upload is exercised together with Phase 1 live validation.
 
-52 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 2 (cell engine).
+78 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 1/2 live validation,
+then Phase 3 (GUI).

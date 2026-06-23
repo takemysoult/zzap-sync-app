@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -36,7 +37,12 @@ def clean_rows(rows: list[PriceRow]) -> list[PriceRow]:
 
 
 def _norm_article(value: str) -> str:
-    """Нормализация артикула для сравнения: trim + верхний регистр."""
+    """Нормализация артикула для сравнения: trim + верхний регистр.
+
+    Весь механизм исключений (импорт через normalize_articles и сопоставление в
+    apply_exclusions) использует ОДНУ И ТУ ЖЕ функцию, поэтому import-time и
+    run-time нормализация всегда совпадают (для не-ASCII upper()≠casefold(), но
+    важно лишь согласованное применение по обе стороны)."""
     return (value or "").strip().upper()
 
 
@@ -68,6 +74,24 @@ def parse_exclusions(text: str) -> set[str]:
             continue
         excluded.add(_norm_article(line))
     return excluded
+
+
+def normalize_articles(values: Iterable[object]) -> list[str]:
+    """Нормализует список артикулов: trim+верхний регистр, без пустых, без дублей.
+
+    В отличие от parse_exclusions (множество, для сравнения на лету) — возвращает
+    УПОРЯДОЧЕННЫЙ список без повторов, пригодный для хранения в exclusion_list
+    (по артикулу на строку). Используется при импорте исключений из Excel: тот же
+    самый контракт нормализации, что и в остальном механизме исключений.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in values:
+        article = _norm_article(v if isinstance(v, str) else "" if v is None else str(v))
+        if article and article not in seen:
+            seen.add(article)
+            out.append(article)
+    return out
 
 
 def apply_exclusions(rows: list[PriceRow], excluded: set[str]) -> list[PriceRow]:

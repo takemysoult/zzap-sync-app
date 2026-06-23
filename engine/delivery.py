@@ -71,8 +71,15 @@ class Delivery:
         self.clear_pending()
         self.journal(tag, f"rows={rows} file={file_name} url={file_url or '-'}")
 
-    def mark_pending(self, built_path: str | Path, file_name: str, reason: str) -> None:
-        """Откладывает готовый файл для повторной отправки."""
+    def mark_pending(self, built_path: str | Path, file_name: str, reason: str,
+                     rows: int | str = "?") -> bool:
+        """Откладывает готовый файл для повторной отправки.
+
+        Возвращает True, если файл реально отложен (его можно дослать), и False,
+        если даже отложить не удалось (тогда вызывающий код должен трактовать это
+        как невосстановимую ошибку, а не как «отложено для досылки»). `rows`
+        сохраняется, чтобы успешная досылка отчиталась реальным числом строк.
+        """
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         try:
             shutil.copyfile(built_path, self.pending_file)
@@ -80,15 +87,17 @@ class Delivery:
             log.error("Не удалось отложить файл для досылки: %s", e)
             self.journal("FAIL",
                          f"upload failed AND cannot stage pending: {reason}; copy error: {e}")
-            return
+            return False
         state = self._load_state()
         state["pending"] = {
             "file": str(self.pending_file),
             "file_name": file_name,
+            "rows": rows,
             "since": datetime.now().isoformat(timespec="seconds"),
         }
         self._save_state(state)
         self.journal("FAIL", f"upload failed, отложено для досылки: {reason}")
+        return True
 
     def get_pending(self) -> dict | None:
         pending = self._load_state().get("pending")

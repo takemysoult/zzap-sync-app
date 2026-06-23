@@ -104,3 +104,43 @@ def test_fk_cascade_deletes_run_history_with_cell(db):
     db.add_run(RunHistory(cell_id=cell_id, started_at="t", status="OK"))
     db.delete_cell(cell_id)
     assert db.list_runs() == []   # cascade removed the history row
+
+
+def test_wal_mode_enabled_for_file_db(db):
+    # Thread-affinity hardening: per-thread connections coexist via WAL + busy_timeout.
+    mode = db._conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode.lower() == "wal"
+
+
+def test_import_exclusion_list_normalizes_and_dedupes(db):
+    # Mixed input: lower/upper dup, blanks, None, a numeric article (Excel float/int).
+    lid = db.import_exclusion_list(["a-1", "  A-1 ", "b-2", "", None, 12345], name="Excel")
+    lst = db.get_exclusion_list(lid)
+    assert lst.name == "Excel"
+    assert lst.articles.splitlines() == ["A-1", "B-2", "12345"]
+
+
+def test_import_exclusion_list_replace_and_append(db):
+    lid = db.import_exclusion_list(["a-1"], name="L")
+    # replace (append=False)
+    db.import_exclusion_list(["c-3"], list_id=lid)
+    assert db.get_exclusion_list(lid).articles.splitlines() == ["C-3"]
+    # append: keep existing, add only genuinely-new (case-insensitive dedupe)
+    db.import_exclusion_list(["c-3", "d-4"], list_id=lid, append=True)
+    assert db.get_exclusion_list(lid).articles.splitlines() == ["C-3", "D-4"]
+
+
+def test_import_exclusion_list_append_preserves_manual_comments(db):
+    lid = db.add_exclusion_list("L", "# мои исключения\nA-1")
+    db.import_exclusion_list(["b-2"], list_id=lid, append=True)
+    assert db.get_exclusion_list(lid).articles.splitlines() == ["# мои исключения", "A-1", "B-2"]
+
+
+def test_assign_exclusion_list_to_cell(db):
+    cab = db.add_cabinet(Cabinet(name="c"))
+    cell_id = db.add_cell(Cell(name="C", cabinet_id=cab, code_templ=1))
+    lid = db.import_exclusion_list(["x-1"], name="L")
+    db.assign_exclusion_list_to_cell(cell_id, lid)
+    assert db.get_cell(cell_id).exclusion_list_id == lid
+    db.assign_exclusion_list_to_cell(cell_id, None)   # clear
+    assert db.get_cell(cell_id).exclusion_list_id is None

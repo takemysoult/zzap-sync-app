@@ -132,7 +132,10 @@ def _names(rows: list[tuple]) -> list[str]:
 
 # Credential tokens in a 1C connection string. Some COM errors echo the whole
 # connection string (incl. Pwd="...") in their message — redact before logging/showing.
-_SECRET_RE = re.compile(r'(?i)\b(Pwd|Password|Usr|User)\s*=\s*("[^"]*"|[^;"\s]+)')
+# The quoted-value branch must consume DOUBLED quotes ("") because build_conn_string
+# escapes an embedded " that way (Pwd="a""b"); a plain "[^"]*" would stop at the first
+# inner quote and leak the rest of the secret.
+_SECRET_RE = re.compile(r'(?i)\b(Pwd|Password|Usr|User)\s*=\s*("(?:[^"]|"")*"|[^;"\s]+)')
 
 
 def _redact_secrets(text: str) -> str:

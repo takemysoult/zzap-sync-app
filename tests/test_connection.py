@@ -142,3 +142,14 @@ def test_error_text_redacts_password_when_error_echoes_conn_string():
     assert 'Usr="***"' in blob
     assert "Serv1C" in blob              # non-secret parts preserved
     assert "ut2025" in blob
+
+
+def test_error_text_redacts_password_with_embedded_quote():
+    # build_conn_string serializes a " in the password as "" (Pwd="a""b"); the
+    # redaction must consume the doubled quote and not leak the trailing fragment.
+    cs = ConnectionManager.build_conn_string(_server_conn(), 'a"b')
+    blob = error_text(Exception(f"Connect failed: {cs}"))
+    assert 'a"b' not in blob              # the real secret is gone
+    assert 'a""b' not in blob            # including its serialized form
+    assert 'Pwd="***"' in blob
+    assert "Serv1C" in blob              # non-secret parts preserved

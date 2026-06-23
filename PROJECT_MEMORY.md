@@ -176,8 +176,41 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
 - **Unverified vs live base:** Склады assumed hierarchical (exclude groups), ВидыЦен assumed
   flat. Confirm on cabinet #1 before relying on the dropdowns.
 
+### Phase 2 (2026-06-23, headless; mocked COM/HTTP; reviewed: SHIP-WITH-FIXES → fixed)
+- **CellRunner** (`app/services/cell_runner.py`): runs one cell end-to-end; never raises —
+  every outcome is a `RunResult` + a `run_history` row. COM source (`source_factory`) and
+  HTTP uploader are injected (defaults `ComPriceSource`/`upload_price`) → fully unit-tested.
+- **Staging is the safety gate:** effective real POST ⇔ `NOT global staging AND NOT
+  cell.staging_mode`. Global flag = the `setting` key **`staging_mode`** (default OFF;
+  per-cell `staging_mode` defaults ON, so new cells never publish silently). Otherwise the
+  file is built and the run is `STAGED` (no POST).
+- **Status taxonomy:** `OK` (posted), `STAGED` (built, not sent), `FAIL` (upload threw →
+  file staged to pending, retryable via `retry_pending` → `RESEND_OK`), `ERROR`
+  (config/query/fetch/build failed, OR pending-staging itself failed → nothing to retry).
+  Row count is carried in the pending state so a resend reports real `rows_sent`.
+- **Secrets on error paths:** every exception message is flattened through
+  `connection.error_text` (redacts `Pwd=`/`Usr=`) before it touches a log, `run_history`,
+  journal, or `RunResult`. A 1C COM error can echo the conn string (incl. the password) —
+  this is the guard. Fixed a redaction gap: a `"` in the password serializes as `""`
+  (`Pwd="a""b"`) and the old regex leaked the tail; the value branch now consumes `""`.
+- **Duplicate rule (§4) implemented** in `app/services/duplicates.py:find_duplicate_risks`:
+  same cabinet + DIFFERENT `code_templ` + both enabled ⇒ dup risk (shared warehouse = high
+  confidence, disjoint = possible). Same `code_templ` is NOT a dup (the runs overwrite each
+  other). Warehouse compare is case-insensitive; output deterministic (cabinet id, then cell id).
+- **DAL thread-affinity:** chose **per-thread `Database` + WAL + `busy_timeout=5000`** (not
+  a shared connection + lock). WAL is file-only (skipped for `:memory:`). Migrations run on
+  first open (main thread) before workers connect.
+- **Excel exclusions import:** `engine/exclusions.py:read_exclusion_articles` (.xlsx/.xlsm =
+  openpyxl read-only streaming + `wb.close()`; .xls = **xlrd≥2.0.1**, .xls-only; numeric
+  cell `12345.0` → `"12345"`; blanks dropped; optional header skip; NO normalization here).
+  Normalization (trim+upper+dedupe) lives in `engine.transform.normalize_articles` and is
+  reused by the DAL `import_exclusion_list` (create/replace/append; append preserves manual
+  `#` comments) + `assign_exclusion_list_to_cell`. `apply_exclusions` re-normalizes at run
+  time via the same `_norm_article`, so import-time and match-time always agree.
+
 ### Still open (later phases)
 - Process model nuance: APScheduler in the tray app vs an extra Windows Task backstop (Phase 4).
 - Multi-cabinet / multi-1C-connection UX (schema already supports multiple rows; Phase 7).
-- Duplicate-across-warehouses detection UX (Phase 2 detector + Phase 3 banner).
-- DAL thread-affinity once the scheduler runs jobs on worker threads (Phase 2).
+- Duplicate-across-warehouses detection UX (Phase 2 detector ✅ + Phase 3 banner).
+- **Phase 1 + first real ZZap POST still need live validation** against cabinet #1 (real
+  1C creds + reachable base). The headless engine is done; the live send is the sign-off.
