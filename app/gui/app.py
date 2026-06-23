@@ -19,10 +19,13 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from PySide6.QtWidgets import QApplication
 
+    from .theme import apply_theme
+
     paths.ensure_dirs()
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("ZZap Sync")
     app.setOrganizationName("ZZap Sync")
+    apply_theme(app)
 
     ctx = AppContext()
     window = MainWindow(ctx)

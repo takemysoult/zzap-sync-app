@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
 
 from ...db.models import Cell
 from ...services.connection import ConnectionManager, Discovery
+from .. import theme
 from ..context import AppContext
 from ..workers import AsyncRunner
 
@@ -59,6 +60,7 @@ class ExclusionImportDialog(QDialog):
         form.addRow(self.cb_append)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("class", "primary")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -129,7 +131,7 @@ class CellEditor(QDialog):
         self.btn_discover = QPushButton("Загрузить склады и виды цен из 1С")
         self.btn_discover.clicked.connect(self._discover)
         self.lbl_discover = QLabel("")
-        self.lbl_discover.setStyleSheet("color: gray;")
+        self.lbl_discover.setProperty("role", "hint")
         load_row.addWidget(self.btn_discover)
         load_row.addWidget(self.lbl_discover, 1)
         wh_l.addLayout(load_row)
@@ -155,12 +157,12 @@ class CellEditor(QDialog):
 
         checklist = QLabel(_CHECKLIST)
         checklist.setWordWrap(True)
-        checklist.setStyleSheet(
-            "color: #555; background: #f4f4f4; padding: 8px; border: 1px solid #ddd;")
+        checklist.setProperty("role", "checklist")
         root.addWidget(checklist)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("class", "primary")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
@@ -320,6 +322,7 @@ class CellEditor(QDialog):
         lay.addWidget(editor)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("class", "primary")
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         lay.addWidget(buttons)

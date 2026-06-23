@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout,
                                QHeaderView, QLabel, QPlainTextEdit, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from .. import theme
 from ..context import AppContext
 
 _JOURNAL_TAIL_LINES = 200
@@ -50,6 +51,7 @@ class StatusScreen(QWidget):
         root.addWidget(QLabel("Журнал выбранной ячейки:"))
         self.journal = QPlainTextEdit()
         self.journal.setReadOnly(True)
+        self.journal.setFont(theme.mono_font())
         root.addWidget(self.journal, 1)
 
     def reload(self) -> None:
@@ -78,7 +80,10 @@ class StatusScreen(QWidget):
                 r.message or "",
             ]
             for col, text in enumerate(values):
-                self.table.setItem(row, col, QTableWidgetItem(text))
+                item = QTableWidgetItem(text)
+                if col == 2 and r.status in theme.STATUS_COLORS:  # colour the status cell
+                    item.setForeground(theme.color(theme.STATUS_COLORS[r.status]))
+                self.table.setItem(row, col, item)
         self._load_journal(cell_id)
 
     def _load_journal(self, cell_id) -> None:

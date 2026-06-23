@@ -42,6 +42,7 @@ class CabinetDialog(QDialog):
         form.addRow("URL метода", self.ed_url)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("class", "primary")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -86,6 +87,7 @@ class CabinetsScreen(QWidget):
 
         btns = QHBoxLayout()
         b_add = QPushButton("Добавить…")
+        b_add.setProperty("class", "primary")
         b_add.clicked.connect(self._add)
         b_edit = QPushButton("Изменить…")
         b_edit.clicked.connect(self._edit)

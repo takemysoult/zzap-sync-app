@@ -19,6 +19,7 @@ from ...db.models import Cell
 from ...services.cell_runner import (RUN_OK, RUN_RESEND_OK, SETTING_GLOBAL_STAGING,
                                      CellRunner, RunResult)
 from ...services.duplicates import SHARED_WAREHOUSE, find_duplicate_risks
+from .. import theme
 from ..context import AppContext
 from ..workers import AsyncRunner
 from .cell_editor import CellEditor
@@ -40,6 +41,7 @@ class CellsScreen(QWidget):
 
         self.banner = QLabel("")
         self.banner.setWordWrap(True)
+        self.banner.setProperty("role", "banner")
         self.banner.setVisible(False)
         root.addWidget(self.banner)
 
@@ -66,6 +68,7 @@ class CellsScreen(QWidget):
         self.btn_run = QPushButton("Запустить выбранную")
         self.btn_run.clicked.connect(self._run_selected)
         self.btn_run_all = QPushButton("Запустить все включённые")
+        self.btn_run_all.setProperty("class", "primary")
         self.btn_run_all.clicked.connect(self._run_all)
         for b in (b_add, b_edit, b_del):
             btns.addWidget(b)
@@ -99,6 +102,9 @@ class CellsScreen(QWidget):
                 item = QTableWidgetItem(text)
                 if col == 0:
                     item.setData(_USER_ROLE, cell.id)
+                elif col == 6:  # mode: draw "БОЕВОЙ" in danger red, staging muted
+                    item.setForeground(theme.color(
+                        theme.MUTED if cell.staging_mode else theme.DANGER))
                 self.table.setItem(row, col, item)
         self._refresh_banner(cells)
 
@@ -108,13 +114,12 @@ class CellsScreen(QWidget):
             self.banner.setVisible(False)
             return
         high = any(r.confidence == SHARED_WAREHOUSE for r in risks)
-        color = "#c0392b" if high else "#b9770e"
-        head = ("⚠ Возможное задвоение товара в кабинете ZZap "
+        head = ("Возможное задвоение товара в кабинете ZZap "
                 f"({len(risks)} предупреждений). ")
         self.banner.setText(head + "Наведите для подробностей.")
         self.banner.setToolTip("\n\n".join(r.message for r in risks))
-        self.banner.setStyleSheet(
-            f"color: white; background: {color}; padding: 8px; border-radius: 4px;")
+        self.banner.setProperty("severity", "high" if high else "split")
+        theme.repolish(self.banner)
         self.banner.setVisible(True)
 
     def _selected_id(self) -> int | None:
@@ -200,8 +205,7 @@ class CellsScreen(QWidget):
     def _set_running(self, running: bool, message: str = "") -> None:
         self.btn_run.setEnabled(not running)
         self.btn_run_all.setEnabled(not running)
-        self.lbl_status.setStyleSheet("color: gray;")
-        self.lbl_status.setText(message)
+        theme.set_status(self.lbl_status, message, "info")
 
     def _on_run_done(self, result: RunResult) -> None:
         self._set_running(False)
@@ -211,21 +215,20 @@ class CellsScreen(QWidget):
     def _on_run_all_done(self, results: list[RunResult]) -> None:
         self._set_running(False)
         ok = sum(1 for r in results if r.status in (RUN_OK, RUN_RESEND_OK))
-        self.lbl_status.setStyleSheet("color: black;")
-        self.lbl_status.setText(
+        theme.set_status(
+            self.lbl_status,
             f"Готово: {len(results)} ячеек, успешных отправок: {ok}. "
-            "Подробности — на вкладке «Журнал».")
+            "Подробности — на вкладке «Журнал».", "")
         self.reload()
 
     def _on_run_err(self, msg: str) -> None:
         self._set_running(False)
-        self.lbl_status.setStyleSheet("color: #b00;")
-        self.lbl_status.setText("Ошибка запуска: " + msg)
+        theme.set_status(self.lbl_status, "Ошибка запуска: " + msg, "error")
 
     def _show_result(self, result: RunResult) -> None:
         good = result.status in (RUN_OK, RUN_RESEND_OK)
-        self.lbl_status.setStyleSheet("color: green;" if good else "color: #b00;")
-        self.lbl_status.setText(f"[{result.status}] {result.message}")
+        theme.set_status(self.lbl_status, f"[{result.status}] {result.message}",
+                         "ok" if good else "error")
 
 
 # Worker-thread jobs: each opens its OWN Database (DAL is thread-affine).

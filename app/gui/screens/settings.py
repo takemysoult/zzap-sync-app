@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGroupBox, QHBoxLayout,
                                QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from ...services.cell_runner import SETTING_GLOBAL_STAGING
+from .. import theme
 from ..context import AppContext
 
 SETTING_INTERVAL_HOURS = "interval_hours"
@@ -46,11 +47,12 @@ class SettingsScreen(QWidget):
         note = QLabel("Интервал и автозапуск применяются фоновым планировщиком "
                       "(добавляется в Phase 4). Глобальный staging действует сразу.")
         note.setWordWrap(True)
-        note.setStyleSheet("color: gray;")
+        note.setProperty("role", "hint")
         root.addWidget(note)
 
         btns = QHBoxLayout()
         b_save = QPushButton("Сохранить")
+        b_save.setProperty("class", "primary")
         b_save.clicked.connect(self._save)
         btns.addWidget(b_save)
         btns.addStretch(1)
@@ -72,5 +74,4 @@ class SettingsScreen(QWidget):
         self.ctx.db.set_setting(SETTING_INTERVAL_HOURS, str(self.sp_interval.value()))
         self.ctx.db.set_bool(SETTING_GLOBAL_STAGING, self.cb_staging.isChecked())
         self.ctx.db.set_bool(SETTING_AUTOSTART, self.cb_autostart.isChecked())
-        self.lbl_status.setStyleSheet("color: green;")
-        self.lbl_status.setText("Сохранено.")
+        theme.set_status(self.lbl_status, "Сохранено.", "ok")

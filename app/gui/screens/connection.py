@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QButtonGroup, QFileDialog, QFormLayout, QGroupBox
 
 from ...db.models import Connection1C
 from ...services.connection import ConnectionManager, ConnectionResult
+from .. import theme
 from ..context import AppContext
 from ..workers import AsyncRunner
 
@@ -78,13 +79,14 @@ class ConnectionScreen(QWidget):
 
         hint = QLabel("Пользователю 1С нужно право «Внешнее соединение» (COM).")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray;")
+        hint.setProperty("role", "hint")
         root.addWidget(hint)
 
         btns = QHBoxLayout()
         self.btn_test = QPushButton("Проверить соединение")
         self.btn_test.clicked.connect(self._on_test)
         self.btn_save = QPushButton("Сохранить")
+        self.btn_save.setProperty("class", "primary")
         self.btn_save.clicked.connect(self._on_save)
         btns.addWidget(self.btn_test)
         btns.addWidget(self.btn_save)
@@ -160,8 +162,7 @@ class ConnectionScreen(QWidget):
         conn = self._read_form()
         password = self._password_for_run()
         self.btn_test.setEnabled(False)
-        self.lbl_status.setStyleSheet("color: gray;")
-        self.lbl_status.setText("Проверяю соединение с 1С…")
+        theme.set_status(self.lbl_status, "Проверяю соединение с 1С…", "info")
 
         def job() -> ConnectionResult:
             return ConnectionManager().test_connection(conn, password)
@@ -171,16 +172,13 @@ class ConnectionScreen(QWidget):
     def _on_test_done(self, result: ConnectionResult) -> None:
         self.btn_test.setEnabled(True)
         if result.ok:
-            self.lbl_status.setStyleSheet("color: green;")
-            self.lbl_status.setText("✓ " + result.message)
+            theme.set_status(self.lbl_status, "✓ " + result.message, "ok")
         else:
-            self.lbl_status.setStyleSheet("color: #b00;")
-            self.lbl_status.setText("✗ " + result.message)
+            theme.set_status(self.lbl_status, "✗ " + result.message, "error")
 
     def _on_test_err(self, msg: str) -> None:
         self.btn_test.setEnabled(True)
-        self.lbl_status.setStyleSheet("color: #b00;")
-        self.lbl_status.setText("✗ Ошибка проверки: " + msg)
+        theme.set_status(self.lbl_status, "✗ Ошибка проверки: " + msg, "error")
 
     def _on_save(self) -> None:
         conn = self._read_form()
@@ -200,5 +198,4 @@ class ConnectionScreen(QWidget):
             self.ctx.db.update_connection(conn, password=new_password or None,
                                           update_password=update_password)
         self.reload()
-        self.lbl_status.setStyleSheet("color: green;")
-        self.lbl_status.setText("Сохранено.")
+        theme.set_status(self.lbl_status, "Сохранено.", "ok")
