@@ -12,11 +12,11 @@ nothing is sent until the user explicitly opts out and confirms.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                               QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
+                               QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox,
+                               QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QMessageBox, QPlainTextEdit,
+                               QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from ...db.models import Cell
 from ...services.connection import ConnectionManager, Discovery
@@ -108,6 +108,7 @@ class CellEditor(QDialog):
         self.sp_templ = QSpinBox()
         self.sp_templ.setRange(0, 2_147_483_647)
         self.sp_templ.setGroupSeparatorShown(False)
+        self.sp_templ.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         # Non-editable: a click opens the list so the user picks a discovered price
         # type (free text only invites typos that yield 0 rows). A saved/offline value
         # is always kept in the list by _populate_price_types so nothing is lost.
