@@ -24,8 +24,34 @@ from app.db.models import Cabinet, Cell, Connection1C  # noqa: E402
 from app.gui.context import AppContext  # noqa: E402
 from app.gui.main_window import MainWindow  # noqa: E402
 from app.gui.screens.cell_editor import CellEditor  # noqa: E402
+from app.gui.tray import TrayController  # noqa: E402
 from app.gui.workers import AsyncRunner  # noqa: E402
+from app.services.scheduler import (KIND_SCHEDULED, RunSummary,  # noqa: E402
+                                     SchedulerService)
 from conftest import FakeCipher  # noqa: E402
+
+
+class _FakeSched:
+    """Records jobs without firing anything (no real timers in the GUI smoke test)."""
+    def __init__(self):
+        self.running = False
+        self.jobs: dict = {}
+
+    def add_job(self, *a, **k):
+        class _J:
+            next_run_time = None
+        if k.get("id"):
+            self.jobs[k["id"]] = _J()
+        return _J()
+
+    def get_job(self, job_id):
+        return self.jobs.get(job_id)
+
+    def start(self, *a, **k):
+        self.running = True
+
+    def shutdown(self, *a, **k):
+        self.running = False
 
 
 @pytest.fixture(scope="module")
@@ -134,3 +160,44 @@ def test_async_runner_redacts_secret_on_failure(qapp):
     assert "hunter2" not in errors[0]
     assert "admin" not in errors[0]
     assert 'Pwd="***"' in errors[0]
+
+
+def test_tray_delivers_run_summary_on_ui_thread(qapp, ctx):
+    # The Phase 4 tray bridge must deliver a scheduler RunSummary on the UI thread
+    # (queued), exactly like AsyncRunner — a bare-closure/direct connection would run
+    # _on_run_finished on the worker thread and touch widgets off-thread.
+    import threading
+
+    svc = SchedulerService(db_factory=ctx.new_db, work_dir=ctx.work_dir,
+                           scheduler=_FakeSched())
+    win = MainWindow(ctx, svc)
+    tray = TrayController(ctx, svc, win)
+    svc.set_listener(tray.listener)
+
+    main_thread = QThread.currentThread()
+    captured: dict = {}
+    original = tray._on_run_finished
+
+    def wrapped(summary):
+        captured["thread"] = QThread.currentThread()
+        captured["summary"] = summary
+        original(summary)
+
+    tray._bridge.run_finished.disconnect()
+    tray._bridge.run_finished.connect(wrapped)
+
+    threading.Thread(
+        target=lambda: svc._emit(RunSummary(kind=KIND_SCHEDULED, results=[]))).start()
+    waited = 0
+    while "summary" not in captured and waited < 2000:
+        qapp.processEvents()
+        QThread.msleep(10)
+        waited += 10
+    qapp.processEvents()
+
+    assert captured.get("summary") is not None
+    assert captured["thread"] is main_thread     # delivered on the UI thread
+    texts = [a.text() for a in tray._menu.actions()]
+    assert any("Открыть окно" in t for t in texts)
+    assert any("Выход" in t for t in texts)
+    win.close()

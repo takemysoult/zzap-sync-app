@@ -19,6 +19,7 @@ from ...db.models import Cell
 from ...services.cell_runner import (RUN_OK, RUN_RESEND_OK, SETTING_GLOBAL_STAGING,
                                      CellRunner, RunResult)
 from ...services.duplicates import SHARED_WAREHOUSE, find_duplicate_risks
+from ...services.scheduler import SchedulerService
 from .. import theme
 from ..context import AppContext
 from ..workers import AsyncRunner
@@ -29,10 +30,12 @@ _USER_ROLE = int(Qt.ItemDataRole.UserRole)
 
 class CellsScreen(QWidget):
     def __init__(self, ctx: AppContext, runner: AsyncRunner,
+                 scheduler_service: SchedulerService | None = None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.ctx = ctx
         self.runner = runner
+        self._service = scheduler_service
         self._build()
         self.reload()
 
@@ -177,7 +180,7 @@ class CellsScreen(QWidget):
                 f"{cell.code_templ} будет заменён)."):
             return
         self._set_running(True, f"Выполняю ячейку «{cell.name}»…")
-        self.runner.submit(lambda: _run_one(self.ctx, cell_id),
+        self.runner.submit(lambda: self._guarded(lambda: _run_one(self.ctx, cell_id)),
                            self._on_run_done, self._on_run_err)
 
     def _run_all(self) -> None:
@@ -192,8 +195,14 @@ class CellsScreen(QWidget):
                 f"(из {len(cells)} включённых)."):
             return
         self._set_running(True, f"Выполняю включённые ячейки ({len(cells)})…")
-        self.runner.submit(lambda: _run_all(self.ctx),
+        self.runner.submit(lambda: self._guarded(lambda: _run_all(self.ctx)),
                            self._on_run_all_done, self._on_run_err)
+
+    def _guarded(self, fn):
+        """Serialise a manual run against scheduled ticks when a scheduler is wired."""
+        if self._service is not None:
+            return self._service.run_under_lock(fn)
+        return fn()
 
     def _confirm_real(self, detail: str) -> bool:
         return QMessageBox.warning(

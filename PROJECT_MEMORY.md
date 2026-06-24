@@ -236,12 +236,51 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
   `AppContext.discovery`; the cell editor merges cached lists with the cell's saved values so an
   offline 1C never drops a previously-chosen warehouse/price type.
 
+### Phase 4 (2026-06-24, scheduler + system tray; offline-tested + real-platform boot smoke)
+- **`SchedulerService`** (`app/services/scheduler.py`, Qt-free, scheduler injected) over APScheduler
+  `BackgroundScheduler`. Main interval job built from `interval_hours` (default 5) with
+  **`coalesce=True, max_instances=1, misfire_grace_time=None`** — `None` = run no matter how late,
+  so a sleep/wake misfire fires **once** on resume (catch-up path #1). A frequent `flush_pending`
+  job (every 10 min) re-sends pending files (offline-send recovery).
+- **One `threading.Lock` serialises every run path** (scheduled tick / manual / catch-up / flush) so
+  two batches never interleave COM or double-upload a cell. Manual runs from the open window go
+  through `run_under_lock` (the cells screen still delivers its own result via `AsyncRunner` and does
+  NOT emit a tray notification); flush uses a **non-blocking** acquire (skips if a run holds the lock).
+- **Catch-up decision is pure + unit-tested:** `last_run_at(db)` = max `run_history.started_at`
+  (covers scheduled+manual); `is_overdue(last, interval, now)` (`None` or elapsed ⇒ True). `start()`
+  runs `request_run_all("catchup")` immediately when overdue (catch-up path #2: process was fully off,
+  not just asleep). The two paths are independent belt-and-suspenders.
+- **Threading:** APScheduler runs jobs on its OWN worker threads (off the UI thread); each job opens
+  its own `Database` via the injected `db_factory` (= `AppContext.new_db`; WAL makes per-thread
+  connections coexist) and `Com1C` does its own Co(Un)Initialize — so COM is safe there. Results reach
+  the UI for tray notifications via a Qt **signal bridge** (`app/gui/tray.py` `_Bridge.run_finished`):
+  the service `listener` (set post-construction via `set_listener`) emits, AutoConnection delivers it
+  **queued on the UI thread** — same rule as `AsyncRunner` (a bare-closure connection would run on the
+  worker thread). A smoke test asserts UI-thread delivery.
+- **`network_check`** (`app/services/net.py:is_online`, TCP to the ZZap host) is injected into
+  `CellRunner`: when known-offline at upload time the file is staged to pending **without** an HTTP
+  attempt (shared `_stage_pending` path → FAIL/retry). **Default `None` ⇒ Phase 2 behaviour unchanged.**
+  The flush job also skips when offline (don't hammer a dead link).
+- **Autostart** (`app/services/autostart.py`): per-user `HKCU\Software\Microsoft\Windows\
+  CurrentVersion\Run` value `ZZapSync`; registry access behind an injectable backend (real
+  `WinRegBackend` / dict fake in tests). Toggled from Настройки; launch command =
+  `pythonw -m app.gui --minimized` (dev) / `"<exe>" --minimized` (frozen, Phase 6). Saving the
+  interval **reschedules live** (`reschedule`, no restart).
+- **Tray / window:** `QSystemTrayIcon` (icon painted at runtime; real asset deferred to Phase 6), RU
+  menu (next run, last-results, «Запустить сейчас» все/ячейка, «Открыть окно», «Выход»), RU run
+  notifications. App runs minimized to tray; `closeEvent` **hides** to tray (one-time RU hint, persisted
+  via `tray_hint_shown`) only when `_background_active`. `app.setQuitOnLastWindowClosed(False)` so a
+  close-to-tray doesn't quit — **but** if no system tray is available, `start_background` re-enables
+  quit-on-close and keeps the window visible (else the app would be unreachable). «Выход» quits.
+- **Tests:** 103 pass offline — `test_scheduler.py` (FakeScheduler: no real timers; asserts job
+  triggers/`coalesce`/`misfire`, live reschedule, `is_overdue`, run/staging, catch-up overdue-vs-recent,
+  flush skip-when-offline/busy, flush resends pending), `test_autostart.py` (dict backend), a CellRunner
+  offline test, and a tray UI-thread-delivery smoke. Also verified: real-platform boot (tray+scheduler+
+  catch-up, clean exit) and a real `HKCU\...\Run` round-trip.
+
 ### Still open (later phases)
-- **Phase 4 process model — DECIDED (2026-06-23):** APScheduler **inside the app**, minimized to
-  the **system tray** (NOT the Windows Task Scheduler, NOT a hybrid). Must include **offline
-  recovery**: on start/tick, missed runs (PC was off — detect via state.json `last_success` /
-  `run_history` vs the interval) run immediately, and pending files (network was down) flush as
-  soon as the connection returns — so after a power/internet outage everything uploads at once.
+- **Phase 4 process model — DONE (2026-06-24):** see the Phase 4 subsection above. (Decision was
+  locked 2026-06-23: APScheduler inside the app + system tray, NOT the Windows Task Scheduler.)
 - Multi-cabinet / multi-1C-connection UX (schema already supports multiple rows; Phase 7).
 - Duplicate-across-warehouses detection UX (Phase 2 detector ✅ + Phase 3 banner).
 - **Phase 1 + first real ZZap POST still need live validation** against cabinet #1 (real

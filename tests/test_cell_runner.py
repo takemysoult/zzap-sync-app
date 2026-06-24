@@ -141,6 +141,29 @@ def test_upload_failure_stages_pending_then_retry_resends(db, tmp_path):
     assert {RUN_FAIL, RUN_RESEND_OK} <= statuses
 
 
+def test_offline_network_check_stages_pending_without_posting(db, tmp_path):
+    # Phase 4: a known-down network must NOT attempt the POST — the built file is
+    # staged to pending and a later retry (network back) resends it.
+    cell_id, *_ = _seed_cell(db, staging=False)
+    up = RecordingUploader()                     # would succeed if it were ever called
+    runner = CellRunner(db, tmp_path / "work",
+                        source_factory=lambda cfg: FakeSource(make_rows()),
+                        uploader=up, network_check=lambda: False)
+    res = runner.run_cell(cell_id)
+
+    assert res.status == RUN_FAIL
+    assert res.posted is False
+    assert up.calls == []                        # no POST attempted while offline
+    delivery = Delivery(tmp_path / "work" / f"cell_{cell_id}")
+    assert delivery.get_pending() is not None
+
+    ok = RecordingUploader()
+    res2 = _runner(db, tmp_path, uploader=ok).retry_pending(cell_id)
+    assert res2.status == RUN_RESEND_OK
+    assert len(ok.calls) == 1
+    assert delivery.get_pending() is None
+
+
 def test_missing_warehouses_is_error_and_sends_nothing(db, tmp_path):
     cell_id, *_ = _seed_cell(db, staging=False, warehouses=[])
     up = RecordingUploader()
