@@ -201,3 +201,26 @@ def test_tray_delivers_run_summary_on_ui_thread(qapp, ctx):
     assert any("Открыть окно" in t for t in texts)
     assert any("Выход" in t for t in texts)
     win.close()
+
+
+def test_status_screen_shows_pending_indicator(qapp, ctx):
+    from engine.delivery import Delivery
+
+    from app.gui.screens.status import StatusScreen
+
+    conn_id, cab_id = _seed(ctx)
+    cell = Cell(name="C", enabled=True, connection_id=conn_id, cabinet_id=cab_id,
+                code_templ=1, price_type="ZZap", warehouses=["W"], staging_mode=True)
+    cell.id = ctx.db.add_cell(cell)
+
+    # Stage a pending file for this cell (network was down at upload time).
+    cell_dir = ctx.work_dir / f"cell_{cell.id}"
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    built = cell_dir / "price.xlsx"
+    built.write_bytes(b"xlsx")
+    Delivery(cell_dir).mark_pending(built, "price.xlsx", "нет сети", rows=42)
+
+    screen = StatusScreen(ctx)
+    screen.cmb_cell.setCurrentIndex(screen.cmb_cell.findData(cell.id))
+    assert screen.lbl_pending.isHidden() is False
+    assert "Ожидает досылки" in screen.lbl_pending.text()

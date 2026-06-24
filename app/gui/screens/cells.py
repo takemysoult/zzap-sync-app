@@ -68,6 +68,8 @@ class CellsScreen(QWidget):
         b_edit.clicked.connect(self._edit)
         b_del = QPushButton("Удалить")
         b_del.clicked.connect(self._delete)
+        self.btn_retry = QPushButton("Дослать отложенное")
+        self.btn_retry.clicked.connect(self._retry_selected)
         self.btn_run = QPushButton("Запустить выбранную")
         self.btn_run.clicked.connect(self._run_selected)
         self.btn_run_all = QPushButton("Запустить все включённые")
@@ -76,6 +78,7 @@ class CellsScreen(QWidget):
         for b in (b_add, b_edit, b_del):
             btns.addWidget(b)
         btns.addStretch(1)
+        btns.addWidget(self.btn_retry)
         btns.addWidget(self.btn_run)
         btns.addWidget(self.btn_run_all)
         root.addLayout(btns)
@@ -198,6 +201,14 @@ class CellsScreen(QWidget):
         self.runner.submit(lambda: self._guarded(lambda: _run_all(self.ctx)),
                            self._on_run_all_done, self._on_run_err)
 
+    def _retry_selected(self) -> None:
+        cell_id = self._selected_id()
+        if cell_id is None:
+            return
+        self._set_running(True, "Досылаю отложенное…")
+        self.runner.submit(lambda: self._guarded(lambda: _retry_one(self.ctx, cell_id)),
+                           self._on_retry_done, self._on_run_err)
+
     def _guarded(self, fn):
         """Serialise a manual run against scheduled ticks when a scheduler is wired."""
         if self._service is not None:
@@ -214,11 +225,21 @@ class CellsScreen(QWidget):
     def _set_running(self, running: bool, message: str = "") -> None:
         self.btn_run.setEnabled(not running)
         self.btn_run_all.setEnabled(not running)
+        self.btn_retry.setEnabled(not running)
         theme.set_status(self.lbl_status, message, "info")
 
     def _on_run_done(self, result: RunResult) -> None:
         self._set_running(False)
         self._show_result(result)
+        self.reload()
+
+    def _on_retry_done(self, result: RunResult | None) -> None:
+        self._set_running(False)
+        if result is None:
+            theme.set_status(self.lbl_status,
+                             "Нет отложенных файлов для досылки.", "")
+        else:
+            self._show_result(result)
         self.reload()
 
     def _on_run_all_done(self, results: list[RunResult]) -> None:
@@ -245,6 +266,14 @@ def _run_one(ctx: AppContext, cell_id: int) -> RunResult:
     db = ctx.new_db()
     try:
         return CellRunner(db, ctx.work_dir).run_cell(cell_id)
+    finally:
+        db.close()
+
+
+def _retry_one(ctx: AppContext, cell_id: int) -> RunResult | None:
+    db = ctx.new_db()
+    try:
+        return CellRunner(db, ctx.work_dir).retry_pending(cell_id)
     finally:
         db.close()
 

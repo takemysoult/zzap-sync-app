@@ -40,7 +40,7 @@ from engine.query_builder import build_price_query
 from engine.sources.base import PriceSource
 from engine.sources.com import ComPriceSource
 from engine.transform import apply_exclusions, build_xlsx, clean_rows, parse_exclusions
-from engine.zzap_client import upload_price
+from engine.zzap_client import ZzapPermanentError, upload_price
 
 from ..db.dal import Database
 from ..db.models import Cell, RunHistory
@@ -118,6 +118,17 @@ class CellRunner:
             return RunResult(cell.id, RUN_STAGED, rows_built=rows_built,
                              file_path=str(file_path), run_id=run_id,
                              message="Staging — файл собран, не отправлен.")
+
+        # Safety: a real ZZap upload FULLY REPLACES the template, so a 0-row file would
+        # silently wipe it. Refuse (ERROR) instead of publishing an empty price list.
+        if rows_built == 0:
+            msg = ("1С вернула 0 строк — боевая выгрузка отменена, чтобы не очистить "
+                   "шаблон ZZap. Проверьте склады/вид цены/фильтры ячейки.")
+            log.warning("Cell %s: 0 строк — боевая выгрузка отменена.", cell.id)
+            delivery.journal(RUN_ERROR, msg)
+            self.db.finish_run(run_id, self._now(), RUN_ERROR, rows_note="0", message=msg)
+            return RunResult(cell.id, RUN_ERROR, rows_built=0,
+                             file_path=str(file_path), run_id=run_id, message=msg)
 
         return self._upload(cell, delivery, run_id, file_path, rows_built)
 
@@ -210,7 +221,17 @@ class CellRunner:
 
         try:
             data = self._uploader(zcfg, file_path, file_path.name)
-        except Exception as e:  # noqa: BLE001 - transient: stage for retry
+        except ZzapPermanentError as e:
+            # Permanent (bad key / wrong url / rejected content): retrying won't help —
+            # surface the actionable RU message as ERROR, don't keep a pending file.
+            reason = error_text(e)
+            log.warning("Cell %s upload rejected (permanent): %s", cell.id, reason)
+            delivery.journal(RUN_ERROR, reason)
+            self.db.finish_run(run_id, self._now(), RUN_ERROR,
+                               rows_note=str(rows_built), message=reason)
+            return RunResult(cell.id, RUN_ERROR, rows_built=rows_built,
+                             file_path=str(file_path), run_id=run_id, message=reason)
+        except Exception as e:  # noqa: BLE001 - transient/unknown: stage for retry
             reason = error_text(e)
             log.warning("Cell %s upload failed: %s", cell.id, reason)
             return self._stage_pending(cell, delivery, run_id, file_path, rows_built, reason)

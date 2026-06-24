@@ -10,10 +10,10 @@ the tray; the tray «Выход» quits explicitly.
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 
 from .. import paths
+from ..logging_setup import setup_logging
 from ..services.net import is_online
 from ..services.scheduler import SchedulerService
 from .context import AppContext
@@ -30,8 +30,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    setup_logging()
     raw = argv if argv is not None else sys.argv[1:]
     args = _parse_args(raw)
 

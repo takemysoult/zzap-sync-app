@@ -246,10 +246,31 @@ catch-up/flush не пересекаются; `is_overdue`/`last_run_at` — ч�
 плюс проверен реальный старт приложения (трей+планировщик+catch-up, чистый выход) и реальный
 `HKCU\...\Run`. **Боевые плановые выгрузки сверяются вместе с live-валидацией Phase 1/2.**
 
-### Phase 5 — Reliability, security, UX polish
+### Phase 5 — Reliability, security, UX polish  ✅ CODE COMPLETE (2026-06-24; offline-tested; publish-confirmation deferred)
 - Robust error surfacing (toasts/notifications), retry/pending UX, log rotation.
 - Secret handling review; least-privilege 1C user guidance; optional HTTPS notes for OData.
 - Edge cases: locked files, partial 1C data, ZZap 4xx mapping to clear messages.
+
+**Реализовано (2026-06-24):**
+- **Таксономия ошибок ZZap** (`engine/zzap_client.py`): `ZzapPermanentError` (401/403/404/413/
+  400/прочие 4xx, `success:false`) vs `ZzapTransientError` (408/429/5xx, таймаут/нет сети) —
+  понятные RU-сообщения с кодом. `CellRunner` теперь различает: постоянная ошибка ⇒ **ERROR**
+  (без бесконечного досыла, видно «что чинить»), временная/неизвестная ⇒ **FAIL** + pending
+  (как раньше). Существующий контракт payload не тронут.
+- **Защита от пустой выгрузки** (`CellRunner.run_cell`): боевой POST из 0 строк ОТМЕНЯЕТСЯ
+  (ERROR), т.к. загрузка ПОЛНОСТЬЮ заменяет шаблон и пустой файл его бы очистил (§4). В staging
+  пустой файл по-прежнему просто собирается.
+- **Ротация логов** (`app/logging_setup.py` + `paths.logs_dir()`): консоль + `RotatingFileHandler`
+  → `%LOCALAPPDATA%\ZZapSync\logs\app.log` (UTF-8, 1 МБ × 5). `app.gui` использует её вместо
+  `basicConfig`. Покрытие занятого файла (`build_xlsx` PermissionError → временное имя) уже было.
+- **UX досыла/pending:** кнопка «Дослать отложенное» на вкладке «Ячейки» (досыл выбранной ячейки
+  через `retry_pending`, под общим run-замком планировщика); индикатор «⏳ Ожидает досылки …» на
+  вкладке «Журнал» для выбранной ячейки (чтение `state.json`, без обращения к ZZap).
+- **Тесты:** 111 проходят офлайн (маппинг кодов/типы исключений, permanent⇒ERROR/0 строк⇒ERROR,
+  ротация лога, индикатор pending). Проверен реальный старт приложения (лог пишется, catch-up
+  отрабатывает, чистый выход).
+- **Отложено до live-валидации:** подтверждение публикации через `GET /stat/prices` (форму ответа
+  нужно проверить на живом кабинете) — реализуем неблокирующе и под флагом во время Section A.
 - **Post-upload publish confirmation (optional, `GET /api/client/v1/stat/prices`)**: the
   only extra ZZap method worth adding later. After a successful upload, read back the number
   of *published* rows for the cell's `code_templ` and show it in the cell status — confirming

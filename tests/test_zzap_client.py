@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from engine.config import DEFAULT_ZZAP_API_URL, ZzapConfig
-from engine.zzap_client import upload_price
+from engine.zzap_client import (ZzapPermanentError, ZzapTransientError, upload_price)
 
 
 class FakeResponse:
@@ -36,6 +36,15 @@ class FakeSession:
     def post(self, url, *, json, headers, timeout):
         self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
         return self.response
+
+
+class RaisingSession:
+    """A session whose .post raises a network-level exception (no HTTP response)."""
+    def __init__(self, exc):
+        self.exc = exc
+
+    def post(self, url, *, json, headers, timeout):
+        raise self.exc
 
 
 def _cfg():
@@ -68,19 +77,39 @@ def test_upload_sends_exact_payload(tmp_path):
     assert base64.b64decode(body["file_body"]) == b"BINARY-XLSX-BYTES"
 
 
-def test_upload_400_raises(tmp_path):
+def test_upload_400_is_permanent(tmp_path):
     sess = FakeSession(FakeResponse(400, text="Неверное значение part_total"))
-    with pytest.raises(RuntimeError, match="400"):
+    with pytest.raises(ZzapPermanentError, match="400"):
         upload_price(_cfg(), _xlsx(tmp_path), session=sess)
 
 
-def test_upload_401_raises(tmp_path):
+def test_upload_401_is_permanent(tmp_path):
     sess = FakeSession(FakeResponse(401))
-    with pytest.raises(RuntimeError, match="401"):
+    with pytest.raises(ZzapPermanentError, match="401"):
         upload_price(_cfg(), _xlsx(tmp_path), session=sess)
 
 
-def test_upload_success_false_raises(tmp_path):
+def test_upload_403_and_404_are_permanent(tmp_path):
+    for code in (403, 404):
+        sess = FakeSession(FakeResponse(code))
+        with pytest.raises(ZzapPermanentError, match=str(code)):
+            upload_price(_cfg(), _xlsx(tmp_path), session=sess)
+
+
+def test_upload_429_and_5xx_are_transient(tmp_path):
+    for code in (429, 500, 503):
+        sess = FakeSession(FakeResponse(code))
+        with pytest.raises(ZzapTransientError, match=str(code)):
+            upload_price(_cfg(), _xlsx(tmp_path), session=sess)
+
+
+def test_upload_network_error_is_transient(tmp_path):
+    sess = RaisingSession(requests.ConnectionError("name resolution failed"))
+    with pytest.raises(ZzapTransientError):
+        upload_price(_cfg(), _xlsx(tmp_path), session=sess)
+
+
+def test_upload_success_false_is_permanent(tmp_path):
     sess = FakeSession(FakeResponse(200, {"success": False, "errors": {"x": "bad"}}))
-    with pytest.raises(RuntimeError, match="ошибк"):
+    with pytest.raises(ZzapPermanentError, match="отклонил"):
         upload_price(_cfg(), _xlsx(tmp_path), session=sess)

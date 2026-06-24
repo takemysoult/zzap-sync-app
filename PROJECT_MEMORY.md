@@ -278,9 +278,34 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
   offline test, and a tray UI-thread-delivery smoke. Also verified: real-platform boot (tray+scheduler+
   catch-up, clean exit) and a real `HKCU\...\Run` round-trip.
 
+### Phase 5 (2026-06-24, reliability/security/UX polish; offline-tested)
+- **ZZap error taxonomy** (`engine/zzap_client.py`): `ZzapError` base + `ZzapPermanentError`
+  (401/403/404/413/400 and other 4xx, plus a 200 `success:false`) vs `ZzapTransientError`
+  (408/429/5xx, and `requests` ConnectionError/Timeout wrapped at the call site). One
+  `_raise_for_zzap(resp)` maps status → a clear **RU** message (HTTP code kept in the text). The
+  fixed payload/headers are untouched (§4). `CellRunner._upload` branches on type: **permanent ⇒
+  ERROR (no pending — retrying can't fix a bad key/url/content; surfaces the actionable message);
+  transient/unknown ⇒ FAIL + `_stage_pending` (retry)**. `retry_pending` left as catch-all FAIL (a
+  permanent error during a flush just keeps the file pending — a visible "fix config" signal).
+- **Empty-result guard** (`CellRunner.run_cell`, AFTER the staging check, BEFORE `_upload`): a real
+  (non-staging) send with `rows_built == 0` is refused as **ERROR** — a ZZap upload FULLY REPLACES
+  the template (§4), so an empty file would silently wipe it. Staging with 0 rows still just builds.
+- **Log rotation** (`app/logging_setup.py` + `paths.logs_dir()`): console + `RotatingFileHandler` →
+  `%LOCALAPPDATA%\ZZapSync\logs\app.log` (UTF-8 per §1; 1 MB × 5). `setup_logging()` is idempotent
+  (handlers tagged `_zzap_tag`); `app/gui/app.py` calls it instead of `basicConfig`.
+- **Pending/retry UX:** «Дослать отложенное» button on the Ячейки tab (`retry_pending` for the
+  selected cell, off-thread via `AsyncRunner`, through the scheduler's `run_under_lock`); a
+  «⏳ Ожидает досылки …» indicator on the Журнал tab from the cell's `state.json` pending (the
+  offline "did it send?" check — no ZZap round-trip).
+- **Tests:** 111 pass offline (code→type mapping incl. a network error; permanent⇒ERROR & 0-row⇒
+  ERROR; log rotation+idempotency; pending indicator). Real app boot re-verified.
+- **Deferred to live validation:** publish confirmation `GET /api/client/v1/stat/prices` (response
+  shape unverified offline — implement non-blocking + gated during Section A).
+
 ### Still open (later phases)
 - **Phase 4 process model — DONE (2026-06-24):** see the Phase 4 subsection above. (Decision was
   locked 2026-06-23: APScheduler inside the app + system tray, NOT the Windows Task Scheduler.)
+- **Phase 5 — DONE (2026-06-24)** except the deferred `GET /stat/prices` publish confirmation.
 - Multi-cabinet / multi-1C-connection UX (schema already supports multiple rows; Phase 7).
 - Duplicate-across-warehouses detection UX (Phase 2 detector ✅ + Phase 3 banner).
 - **Phase 1 + first real ZZap POST still need live validation** against cabinet #1 (real

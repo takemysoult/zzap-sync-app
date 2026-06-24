@@ -69,6 +69,12 @@ Run the desktop app (from the 64-bit venv):
   (`QSystemTrayIcon`, RU menu + notifications), starts with Windows (per-user `HKCU\...\Run`), and
   reschedules live when the interval changes. A `threading.Lock` serialises every run; the staging
   kill-switch is always honored. Scheduled uploads pair with Phase 1/2 live validation for sign-off.
+- **Phase 5 (Reliability & polish) — code complete.** ZZap HTTP errors map to clear RU messages and
+  are classified permanent (bad key/URL/content → ERROR, no endless retry) vs transient (5xx/429/
+  timeout → staged for retry). A **0-row safety guard** refuses a real upload that would wipe the
+  template. App logs rotate under `%LOCALAPPDATA%\ZZapSync\logs\`. Pending uploads are visible
+  («Ожидает досылки») with a manual «Дослать отложенное» action. The optional publish confirmation
+  (`GET /stat/prices`) is deferred to live validation (its response shape needs the real cabinet).
 
-103 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 1/2 live validation,
-then Phase 5 (reliability/polish) and Phase 6 (packaging).
+111 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 1/2 live validation,
+then Phase 6 (packaging: PyInstaller exe + installer + first-run wizard).

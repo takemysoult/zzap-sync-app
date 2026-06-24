@@ -18,6 +18,7 @@ from conftest import FakeCipher, make_rows
 from engine.config import ZzapConfig
 from engine.delivery import Delivery
 from engine.exclusions import read_exclusion_articles
+from engine.zzap_client import ZzapPermanentError
 
 _DEFAULT_URL = "https://b52-api.zzap.pro/api/client/v1/price1c/upload"
 
@@ -162,6 +163,32 @@ def test_offline_network_check_stages_pending_without_posting(db, tmp_path):
     assert res2.status == RUN_RESEND_OK
     assert len(ok.calls) == 1
     assert delivery.get_pending() is None
+
+
+def test_permanent_zzap_error_is_error_and_not_staged(db, tmp_path):
+    # Phase 5: a permanent rejection (bad key / wrong url / rejected content) must NOT
+    # be staged for endless retry — it's ERROR with the actionable message, no pending.
+    cell_id, *_ = _seed_cell(db, staging=False)
+    bad = RecordingUploader(error=ZzapPermanentError("ZZap вернул 401 — неверный ключ."))
+    res = _runner(db, tmp_path, uploader=bad).run_cell(cell_id)
+
+    assert res.status == RUN_ERROR
+    assert res.posted is False
+    assert len(bad.calls) == 1                   # it was attempted...
+    delivery = Delivery(tmp_path / "work" / f"cell_{cell_id}")
+    assert delivery.get_pending() is None        # ...but nothing left to retry
+
+
+def test_zero_rows_real_send_is_blocked(db, tmp_path):
+    # Phase 5 safety: 0 rows would WIPE the template (uploads fully replace) -> refuse.
+    cell_id, *_ = _seed_cell(db, staging=False)
+    up = RecordingUploader()
+    res = _runner(db, tmp_path, rows=[], uploader=up).run_cell(cell_id)
+
+    assert res.status == RUN_ERROR
+    assert up.calls == []                        # nothing posted
+    assert "0 строк" in res.message
+    assert db.list_runs(cell_id=cell_id)[0].status == RUN_ERROR
 
 
 def test_missing_warehouses_is_error_and_sends_nothing(db, tmp_path):

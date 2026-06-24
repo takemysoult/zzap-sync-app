@@ -32,5 +32,11 @@ def work_dir() -> Path:
     return app_data_dir() / "work"
 
 
+def logs_dir() -> Path:
+    """Directory for the rotating application log (Phase 5)."""
+    return app_data_dir() / "logs"
+
+
 def ensure_dirs() -> None:
     work_dir().mkdir(parents=True, exist_ok=True)
+    logs_dir().mkdir(parents=True, exist_ok=True)
