@@ -39,7 +39,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from ..db.dal import Database
-from .cell_runner import (RUN_ERROR, RUN_FAIL, RUN_OK, RUN_RESEND_OK, RUN_STAGED,
+from .cell_runner import (RUN_ERROR, RUN_FAIL, RUN_OK, RUN_RESEND_OK,
                           CellRunner, RunResult)
 
 log = logging.getLogger(__name__)
@@ -82,10 +82,6 @@ class RunSummary:
     @property
     def ok(self) -> int:
         return self._count(RUN_OK, RUN_RESEND_OK)
-
-    @property
-    def staged(self) -> int:
-        return self._count(RUN_STAGED)
 
     @property
     def failed(self) -> int:

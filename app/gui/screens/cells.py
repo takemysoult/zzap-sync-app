@@ -16,8 +16,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderV
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ...db.models import Cell
-from ...services.cell_runner import (RUN_OK, RUN_RESEND_OK, SETTING_GLOBAL_STAGING,
-                                     CellRunner, RunResult)
+from ...services.cell_runner import RUN_OK, RUN_RESEND_OK, CellRunner, RunResult
 from ...services.duplicates import SHARED_WAREHOUSE, find_duplicate_risks
 from ...services.scheduler import SchedulerService
 from .. import theme
@@ -48,10 +47,9 @@ class CellsScreen(QWidget):
         self.banner.setVisible(False)
         root.addWidget(self.banner)
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Название", "Вкл.", "Кабинет", "code_templ", "Вид цены",
-             "Склады", "Режим"])
+            ["Название", "Вкл.", "Кабинет", "code_templ", "Вид цены", "Склады"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -93,7 +91,6 @@ class CellsScreen(QWidget):
         cells = self.ctx.db.list_cells()
         self.table.setRowCount(len(cells))
         for row, cell in enumerate(cells):
-            mode = "staging" if cell.staging_mode else "БОЕВОЙ"
             cab = cabinets.get(cell.cabinet_id, "—")
             values = [
                 cell.name,
@@ -102,15 +99,11 @@ class CellsScreen(QWidget):
                 str(cell.code_templ),
                 cell.price_type,
                 ", ".join(cell.warehouses),
-                mode,
             ]
             for col, text in enumerate(values):
                 item = QTableWidgetItem(text)
                 if col == 0:
                     item.setData(_USER_ROLE, cell.id)
-                elif col == 6:  # mode: draw "БОЕВОЙ" in danger red, staging muted
-                    item.setForeground(theme.color(
-                        theme.MUTED if cell.staging_mode else theme.DANGER))
                 self.table.setItem(row, col, item)
         self._refresh_banner(cells)
 
@@ -165,12 +158,6 @@ class CellsScreen(QWidget):
             self.reload()
 
     # --- run -------------------------------------------------------------
-    def _global_staging(self) -> bool:
-        return self.ctx.db.get_bool(SETTING_GLOBAL_STAGING, default=False)
-
-    def _is_real_send(self, cell: Cell) -> bool:
-        return not self._global_staging() and not cell.staging_mode
-
     def _run_selected(self) -> None:
         cell_id = self._selected_id()
         if cell_id is None:
@@ -178,7 +165,7 @@ class CellsScreen(QWidget):
         cell = self.ctx.db.get_cell(cell_id)
         if cell is None:
             return
-        if self._is_real_send(cell) and not self._confirm_real(
+        if not self._confirm_real(
                 f"Ячейка «{cell.name}» будет отправлена в ZZap (шаблон "
                 f"{cell.code_templ} будет заменён)."):
             return
@@ -192,10 +179,8 @@ class CellsScreen(QWidget):
             QMessageBox.information(self, "Нет ячеек",
                                    "Нет включённых ячеек для запуска.")
             return
-        real = [c for c in cells if self._is_real_send(c)]
-        if real and not self._confirm_real(
-                f"Боевая отправка в ZZap затронет ячеек: {len(real)} "
-                f"(из {len(cells)} включённых)."):
+        if not self._confirm_real(
+                f"Отправка в ZZap затронет включённых ячеек: {len(cells)}."):
             return
         self._set_running(True, f"Выполняю включённые ячейки ({len(cells)})…")
         self.runner.submit(lambda: self._guarded(lambda: _run_all(self.ctx)),
@@ -217,8 +202,8 @@ class CellsScreen(QWidget):
 
     def _confirm_real(self, detail: str) -> bool:
         return QMessageBox.warning(
-            self, "Боевая отправка",
-            detail + "\n\nЭто НЕ режим staging. Продолжить отправку?",
+            self, "Отправка в ZZap",
+            detail + "\n\nПродолжить отправку?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
 

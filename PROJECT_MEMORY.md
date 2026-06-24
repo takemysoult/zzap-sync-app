@@ -302,10 +302,38 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
 - **Deferred to live validation:** publish confirmation `GET /api/client/v1/stat/prices` (response
   shape unverified offline — implement non-blocking + gated during Section A).
 
+### Phase 6 (2026-06-24, packaging + production hardening; built & released)
+- **Staging removed (user decision):** per-cell `staging_mode` + the global kill-switch are gone from
+  the model, schema, DAL, `CellRunner`, scheduler and GUI. Every enabled cell uploads for real on
+  schedule. The leftover `cell.staging_mode` column on OLD DBs is harmless (never read). Remaining
+  safety: the **0-row guard** (0 rows ⇒ ERROR, never wipe a template) + new cells default disabled +
+  a confirm on manual «Запустить».
+- **Single instance** (`app/single_instance.py`): `QSharedMemory("ZZapSyncSingleton")` (Windows frees
+  it on crash) + `QLocalServer`/`QLocalSocket`; a 2nd launch pings the primary to `bring_to_front` and
+  exits. Wired in `app/gui/app.py` after the `--watchdog` branch.
+- **Crash watchdog:** the app writes `paths.heartbeat_path()` every 60 s (`watchdog.write_heartbeat`
+  via a QTimer in `MainWindow._start_heartbeat`). `app/watchdog.py:run_watchdog` (entry
+  `app.gui --watchdog`, no GUI): if `watchdog_enabled` off → exit; heartbeat fresh (<5 min) → exit;
+  else relaunch `--minimized` + `ctypes` MessageBox. `app/services/watchdog_task.py` creates/removes a
+  per-user interactive (`/it`) Scheduled Task "ZZapSync Watchdog" via `schtasks` (runner injected for
+  tests), every `interval_hours` — the only thing that survives a native COM/Qt crash. Ensured on
+  startup (`MainWindow._ensure_watchdog_task`); Настройки toggle (`watchdog_enabled`, default ON) +
+  interval-save create/update/remove it.
+- **Packaging** (`packaging/`): `zzapsync_main.py` (frozen entry), `zzapsync.spec` (PyInstaller onedir,
+  `console=False`, icon, `datas=[('app/db/schema.sql','app/db')]`, hiddenimports = win32timezone +
+  apscheduler executors/jobstores + lazily-imported app.watchdog/single_instance), `make_icon.py`→
+  `zzapsync.ico` (Pillow), `installer.iss` (Inno Setup, Program Files / admin / x64compatible /
+  Russian; uninstall removes the watchdog task + HKCU Run key), `build.ps1`. `.gitignore` overrides the
+  `*.spec` ignore to keep `packaging/zzapsync.spec`. `app.__version__ = "1.0.0"`.
+- **Release:** `dist/ZZapSync-Setup-1.0.0.exe` (~43 MB) built + uploaded to GitHub Releases `v1.0.0`.
+- **Autostart** targets `sys.executable` when frozen (the installed exe). After go-live, **disable the
+  old CLI's Windows Task Scheduler job** (same template 330017019) to avoid double uploads.
+
 ### Still open (later phases)
 - **Phase 4 process model — DONE (2026-06-24):** see the Phase 4 subsection above. (Decision was
   locked 2026-06-23: APScheduler inside the app + system tray, NOT the Windows Task Scheduler.)
 - **Phase 5 — DONE (2026-06-24)** except the deferred `GET /stat/prices` publish confirmation.
+- **Phase 6 — DONE (2026-06-24):** packaging + staging removal + single-instance + watchdog + release.
 - Multi-cabinet / multi-1C-connection UX (schema already supports multiple rows; Phase 7).
 - Duplicate-across-warehouses detection UX (Phase 2 detector ✅ + Phase 3 banner).
 - **Phase 1 + first real ZZap POST still need live validation** against cabinet #1 (real

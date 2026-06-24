@@ -37,6 +37,12 @@ def logs_dir() -> Path:
     return app_data_dir() / "logs"
 
 
+def heartbeat_path() -> Path:
+    """File the running app touches periodically so the external watchdog can tell it
+    is alive (Phase 6)."""
+    return app_data_dir() / "heartbeat.txt"
+
+
 def ensure_dirs() -> None:
     work_dir().mkdir(parents=True, exist_ok=True)
     logs_dir().mkdir(parents=True, exist_ok=True)

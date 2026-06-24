@@ -1,9 +1,9 @@
-"""Settings screen — upload interval, the GLOBAL staging kill-switch, autostart.
+"""Settings screen — upload interval, autostart, and the crash watchdog.
 
-These are key/value rows in the ``setting`` table. The global staging switch is the
-``staging_mode`` key read by CellRunner (when ON, nothing is ever sent, regardless of
-per-cell settings). Saving the interval **reschedules the running scheduler live** (no
-restart); toggling autostart adds/removes the per-user ``HKCU\\...\\Run`` entry. The
+Key/value rows in the ``setting`` table. Saving the interval **reschedules the running
+scheduler live** (no restart) and updates the watchdog task's frequency; autostart
+toggles the per-user ``HKCU\\...\\Run`` entry; the watchdog toggle adds/removes the
+Windows scheduled task that relaunches + notifies if the app stops running. The
 scheduler service + autostart manager are injected by the main window (both default to
 None so the screen still builds standalone in tests).
 """
@@ -12,11 +12,12 @@ from __future__ import annotations
 from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGroupBox, QHBoxLayout,
                                QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
+from ...services import watchdog_task
 from ...services.autostart import (SETTING_AUTOSTART, AutostartManager,
                                    launch_command)
-from ...services.cell_runner import SETTING_GLOBAL_STAGING
 from ...services.scheduler import (DEFAULT_INTERVAL_HOURS, SETTING_INTERVAL_HOURS,
                                    SchedulerService)
+from ...services.watchdog_task import SETTING_WATCHDOG_ENABLED
 from .. import theme
 from ..context import AppContext
 
@@ -43,17 +44,18 @@ class SettingsScreen(QWidget):
         self.sp_interval.setSuffix(" ч")
         form.addRow("Интервал авто-выгрузки", self.sp_interval)
 
-        self.cb_staging = QCheckBox(
-            "Глобальный режим staging — НИЧЕГО не отправлять в ZZap (общий стоп-кран)")
-        form.addRow("", self.cb_staging)
-
         self.cb_autostart = QCheckBox("Запускать вместе с Windows")
         form.addRow("", self.cb_autostart)
+
+        self.cb_watchdog = QCheckBox(
+            "Сторож: перезапускать и уведомлять, если программа перестала работать")
+        form.addRow("", self.cb_watchdog)
         root.addWidget(box)
 
         note = QLabel("Интервал применяется сразу (планировщик перепланируется без "
-                      "перезапуска). Автозапуск — отдельная запись в реестре пользователя. "
-                      "Глобальный staging действует немедленно.")
+                      "перезапуска). Автозапуск — запись в реестре пользователя. "
+                      "Сторож — отдельная задача Планировщика Windows: проверяет работу "
+                      "программы и поднимает её при сбое.")
         note.setWordWrap(True)
         note.setProperty("role", "hint")
         root.addWidget(note)
@@ -73,16 +75,16 @@ class SettingsScreen(QWidget):
     def reload(self) -> None:
         self.sp_interval.setValue(
             self.ctx.db.get_int(SETTING_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS))
-        self.cb_staging.setChecked(
-            self.ctx.db.get_bool(SETTING_GLOBAL_STAGING, default=False))
         self.cb_autostart.setChecked(
             self.ctx.db.get_bool(SETTING_AUTOSTART, default=False))
+        self.cb_watchdog.setChecked(
+            self.ctx.db.get_bool(SETTING_WATCHDOG_ENABLED, default=True))
 
     def _save(self) -> None:
         interval = self.sp_interval.value()
         self.ctx.db.set_setting(SETTING_INTERVAL_HOURS, str(interval))
-        self.ctx.db.set_bool(SETTING_GLOBAL_STAGING, self.cb_staging.isChecked())
         self.ctx.db.set_bool(SETTING_AUTOSTART, self.cb_autostart.isChecked())
+        self.ctx.db.set_bool(SETTING_WATCHDOG_ENABLED, self.cb_watchdog.isChecked())
 
         msgs = ["Сохранено."]
         if self._service is not None:
@@ -95,4 +97,11 @@ class SettingsScreen(QWidget):
                 theme.set_status(self.lbl_status,
                                  f"Сохранено, но автозапуск не изменён: {e}", "error")
                 return
+        # Watchdog task tracks the on/off toggle + the current interval.
+        try:
+            watchdog_task.apply(self.cb_watchdog.isChecked(), interval)
+        except Exception as e:  # noqa: BLE001 - never block saving on task errors
+            theme.set_status(self.lbl_status,
+                             f"Сохранено, но сторож не изменён: {e}", "error")
+            return
         theme.set_status(self.lbl_status, " ".join(msgs), "ok")

@@ -17,6 +17,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!packaging/zzapsync.spec   # the PyInstaller spec is source — keep it tracked
 
 # --- Application runtime data (machine-specific, may contain real data) ---
 *.db

@@ -43,13 +43,10 @@ CREATE TABLE IF NOT EXISTS cell (
     warehouses        TEXT    NOT NULL DEFAULT '[]',  -- JSON array of warehouse names
     exclusion_list_id INTEGER REFERENCES exclusion_list(id) ON DELETE SET NULL,
     include_header    INTEGER NOT NULL DEFAULT 0,      -- ZZap templates expect NO header
-    columns           TEXT    NOT NULL DEFAULT '{"producer":1,"number":2,"name":3,"quantity":4,"price":5}',
-    -- Per-cell safety gate: a NEW cell is staging by default (build file, do NOT POST).
-    -- Real uploads require the user to flip this off explicitly (PROMPT.md "Safety first").
-    staging_mode      INTEGER NOT NULL DEFAULT 1
+    columns           TEXT    NOT NULL DEFAULT '{"producer":1,"number":2,"name":3,"quantity":4,"price":5}'
 );
 
--- Key/value app settings (interval_hours, staging_mode global kill-switch, autostart, ...).
+-- Key/value app settings (interval_hours, autostart, watchdog_enabled, ...).
 CREATE TABLE IF NOT EXISTS setting (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL

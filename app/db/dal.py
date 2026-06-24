@@ -284,13 +284,13 @@ class Database:
         cur = self._conn.execute(
             """INSERT INTO cell
                (name, enabled, connection_id, cabinet_id, code_templ, price_type,
-                warehouses, exclusion_list_id, include_header, columns, staging_mode)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                warehouses, exclusion_list_id, include_header, columns)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (cell.name, int(cell.enabled), cell.connection_id, cell.cabinet_id,
              cell.code_templ, cell.price_type,
              json.dumps(cell.warehouses, ensure_ascii=False),
              cell.exclusion_list_id, int(cell.include_header),
-             json.dumps(cell.columns), int(cell.staging_mode)),
+             json.dumps(cell.columns)),
         )
         self._conn.commit()
         return int(cur.lastrowid)
@@ -312,12 +312,12 @@ class Database:
         self._conn.execute(
             """UPDATE cell SET name=?, enabled=?, connection_id=?, cabinet_id=?,
                code_templ=?, price_type=?, warehouses=?, exclusion_list_id=?,
-               include_header=?, columns=?, staging_mode=? WHERE id=?""",
+               include_header=?, columns=? WHERE id=?""",
             (cell.name, int(cell.enabled), cell.connection_id, cell.cabinet_id,
              cell.code_templ, cell.price_type,
              json.dumps(cell.warehouses, ensure_ascii=False),
              cell.exclusion_list_id, int(cell.include_header),
-             json.dumps(cell.columns), int(cell.staging_mode), cell.id),
+             json.dumps(cell.columns), cell.id),
         )
         self._conn.commit()
 
@@ -424,7 +424,6 @@ def _row_to_cell(row: sqlite3.Row) -> Cell:
         code_templ=row["code_templ"], price_type=row["price_type"],
         warehouses=warehouses, exclusion_list_id=row["exclusion_list_id"],
         include_header=bool(row["include_header"]), columns=columns,
-        staging_mode=bool(row["staging_mode"]),
     )
 
 

@@ -62,24 +62,21 @@ def test_cell_defaults_and_json_round_trip(db):
     assert cell.columns == {"producer": 1, "number": 2, "name": 3,
                             "quantity": 4, "price": 5}
     # safety defaults
-    assert cell.staging_mode is True
     assert cell.enabled is False
     assert cell.include_header is False
 
     cell.enabled = True
-    cell.staging_mode = False
     db.update_cell(cell)
     reloaded = db.get_cell(cell_id)
     assert reloaded.enabled is True
-    assert reloaded.staging_mode is False
     assert len(db.list_cells(enabled_only=True)) == 1
 
 
 def test_settings_typed_accessors(db):
     db.set_setting("interval_hours", "5")
     assert db.get_int("interval_hours") == 5
-    db.set_bool("staging_mode", True)
-    assert db.get_bool("staging_mode") is True
+    db.set_bool("autostart", True)
+    assert db.get_bool("autostart") is True
     assert db.get_setting("missing", "default") == "default"
     # upsert overwrites
     db.set_setting("interval_hours", "8")

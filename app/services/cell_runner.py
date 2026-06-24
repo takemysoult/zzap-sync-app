@@ -10,15 +10,15 @@ Pipeline for a single cell (ROADMAP §3 / PROMPT B.1):
       -> upload_price(api_key, code_templ)   (ZZap)
       -> record run_history + per-cell Delivery (journal / state / pending)
 
-**Safety (staging):** a real POST happens only when the GLOBAL staging kill-switch
-is OFF *and* the cell's `staging_mode` is OFF. Otherwise the file is built and the
-run is recorded as STAGED — nothing is sent. New cells default to staging.
+**Safety (0-row guard):** a real upload FULLY REPLACES the ZZap template, so a build
+that yields 0 rows is refused as ERROR (never wipe a template with an empty file).
 
 **Failure handling:** errors *before* the upload (config / query / fetch / build)
-finish the run as ERROR. An upload that throws is recoverable: the built file is
-staged to the cell's pending slot, the run is FAIL, and `retry_pending` re-sends it
-later (RESEND_OK on success). Secrets never reach a log or a stored message — every
-error string is flattened through `error_text`, which redacts `Pwd=`/`Usr=`.
+finish the run as ERROR. A permanent ZZap rejection (bad key/url/content,
+`ZzapPermanentError`) is ERROR — retrying can't help. A transient failure (5xx / 429 /
+timeout / no network) stages the built file to the cell's pending slot as FAIL, and
+`retry_pending` re-sends it later (RESEND_OK on success). Secrets never reach a log or a
+stored message — every error string is flattened through `error_text` (redacts `Pwd=`/`Usr=`).
 
 The COM source and the HTTP uploader are injected (defaults: `ComPriceSource`,
 `upload_price`) so the whole runner is unit-tested with no live 1C/ZZap.
@@ -51,13 +51,9 @@ log = logging.getLogger(__name__)
 # run_history.status values produced by the runner.
 RUN_RUNNING = "RUNNING"
 RUN_OK = "OK"
-RUN_STAGED = "STAGED"
 RUN_FAIL = "FAIL"          # upload failed; file staged to pending for retry
 RUN_ERROR = "ERROR"        # config/query/fetch/build error; nothing to retry
 RUN_RESEND_OK = "RESEND_OK"
-
-# Global staging kill-switch setting key (off by default; per-cell staging still guards).
-SETTING_GLOBAL_STAGING = "staging_mode"
 
 SourceFactory = Callable[[ComConfig], PriceSource]
 Uploader = Callable[..., dict]
@@ -109,15 +105,6 @@ class CellRunner:
             delivery.journal(RUN_ERROR, msg)
             self.db.finish_run(run_id, self._now(), RUN_ERROR, message=msg)
             return RunResult(cell.id, RUN_ERROR, run_id=run_id, message=msg)
-
-        if self._global_staging() or cell.staging_mode:
-            delivery.journal(RUN_STAGED, f"rows={rows_built} (staging — не отправлено)")
-            self.db.finish_run(run_id, self._now(), RUN_STAGED,
-                               rows_note=str(rows_built),
-                               message="Staging — файл собран, не отправлен.")
-            return RunResult(cell.id, RUN_STAGED, rows_built=rows_built,
-                             file_path=str(file_path), run_id=run_id,
-                             message="Staging — файл собран, не отправлен.")
 
         # Safety: a real ZZap upload FULLY REPLACES the template, so a 0-row file would
         # silently wipe it. Refuse (ERROR) instead of publishing an empty price list.
@@ -286,9 +273,6 @@ class CellRunner:
         if resolved is None:
             raise ValueError(f"Ячейка id={cell} не найдена.")
         return resolved
-
-    def _global_staging(self) -> bool:
-        return self.db.get_bool(SETTING_GLOBAL_STAGING, default=False)
 
     def _cell_dir(self, cell_id: int) -> Path:
         return self.work_dir / f"cell_{cell_id}"

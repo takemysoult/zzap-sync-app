@@ -43,8 +43,9 @@ Run the desktop app (from the 64-bit venv):
 ```
 
 ## Safety
-- New cells default to **staging** (build the XLSX, do NOT POST). Real uploads require an
-  explicit per-cell opt-out, plus the global staging kill-switch being off.
+- New cells default to **disabled**; a manual «Запустить» asks for confirmation, and a build that
+  yields **0 rows is refused** (a ZZap upload fully replaces the template — never wipe it with an
+  empty file). A **watchdog** restarts the app and notifies the user if it stops running.
 - Secrets (1C password, ZZap API keys) are **encrypted at rest** (DPAPI) and masked in the UI.
   Never committed; never logged.
 
@@ -54,7 +55,7 @@ Run the desktop app (from the 64-bit venv):
   live warehouse/price-type discovery, and the dynamic 5-column query builder, all unit-tested.
   Live validation against a real 1C base is the remaining Phase 1 sign-off step.
 - **Phase 2 (Cell engine, headless) — code complete (mocked COM/HTTP).** `CellRunner` runs a
-  cell end-to-end with a staging safety gate + pending/retry, the duplicate-across-warehouses
+  cell end-to-end with a 0-row safety guard + pending/retry, the duplicate-across-warehouses
   detector, Excel exclusions import (`.xlsx`/`.xls`), and DAL thread-affinity (WAL). The first
   real ZZap upload is exercised together with Phase 1 live validation.
 - **Phase 3 (GUI) — code complete.** PySide6 desktop app (`app/gui/`): connection, cabinets,
@@ -67,14 +68,20 @@ Run the desktop app (from the 64-bit venv):
   missed runs catch up immediately on resume (`coalesce` + a startup overdue check), and pending
   files flush as soon as the network returns. The app runs minimized to the **system tray**
   (`QSystemTrayIcon`, RU menu + notifications), starts with Windows (per-user `HKCU\...\Run`), and
-  reschedules live when the interval changes. A `threading.Lock` serialises every run; the staging
-  kill-switch is always honored. Scheduled uploads pair with Phase 1/2 live validation for sign-off.
+  reschedules live when the interval changes. A `threading.Lock` serialises every run. Scheduled
+  uploads pair with Phase 1/2 live validation for sign-off.
 - **Phase 5 (Reliability & polish) — code complete.** ZZap HTTP errors map to clear RU messages and
   are classified permanent (bad key/URL/content → ERROR, no endless retry) vs transient (5xx/429/
-  timeout → staged for retry). A **0-row safety guard** refuses a real upload that would wipe the
+  timeout → queued for retry). A **0-row safety guard** refuses an upload that would wipe the
   template. App logs rotate under `%LOCALAPPDATA%\ZZapSync\logs\`. Pending uploads are visible
   («Ожидает досылки») with a manual «Дослать отложенное» action. The optional publish confirmation
   (`GET /stat/prices`) is deferred to live validation (its response shape needs the real cabinet).
+- **Phase 6 (Packaging & hardening) — done; released.** The dev-only staging mode is **removed**
+  (the app uploads for real; the 0-row guard remains). A **single-instance** guard stops a second
+  copy (it just raises the open window). A **crash watchdog** (a Windows scheduled task driven by a
+  heartbeat) restarts the app and notifies the user if it stops — toggleable in Настройки. Packaged
+  with **PyInstaller + Inno Setup** into `ZZapSync-Setup-1.0.0.exe` (Program Files install, Start-Menu
+  shortcut, autostart, uninstall cleanup), published to GitHub Releases `v1.0.0`.
 
-111 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 1/2 live validation,
-then Phase 6 (packaging: PyInstaller exe + installer + first-run wizard).
+118 tests pass. See `ROADMAP.md` §5 for the full phase plan. Live 1C is verified read-only; the
+first real ZZap upload happens when you enable a cell in the installed app.

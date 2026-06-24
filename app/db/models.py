@@ -53,8 +53,6 @@ class Cell:
     columns: dict[str, int] = field(
         default_factory=lambda: {"producer": 1, "number": 2, "name": 3,
                                  "quantity": 4, "price": 5})
-    # New cells default to staging (safety): build the file but do NOT POST to ZZap.
-    staging_mode: bool = True
 
 
 @dataclass

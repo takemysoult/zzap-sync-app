@@ -113,8 +113,6 @@ class CellEditor(QDialog):
         # is always kept in the list by _populate_price_types so nothing is lost.
         self.cmb_price = QComboBox()
         self.cmb_price.setPlaceholderText("— загрузите из 1С и выберите —")
-        self.cb_staging = QCheckBox(
-            "Режим staging для этой ячейки (собирать файл, НЕ отправлять)")
 
         form.addRow("Название", self.ed_name)
         form.addRow("", self.cb_enabled)
@@ -122,7 +120,6 @@ class CellEditor(QDialog):
         form.addRow("Подключение 1С", self.cmb_conn)
         form.addRow("Код шаблона (code_templ)", self.sp_templ)
         form.addRow("Вид цены", self.cmb_price)
-        form.addRow("", self.cb_staging)
         root.addLayout(form)
 
         # Warehouses (multi-select) + load-from-1C
@@ -174,7 +171,6 @@ class CellEditor(QDialog):
     def _load(self, cell: Cell) -> None:
         self.ed_name.setText(cell.name)
         self.cb_enabled.setChecked(cell.enabled)
-        self.cb_staging.setChecked(cell.staging_mode)
         self.sp_templ.setValue(int(cell.code_templ or 0))
 
         self.cmb_cabinet.clear()
@@ -381,5 +377,4 @@ class CellEditor(QDialog):
             exclusion_list_id=self._exclusion_list_id,
             include_header=c.include_header,
             columns=c.columns,
-            staging_mode=self.cb_staging.isChecked(),
         )

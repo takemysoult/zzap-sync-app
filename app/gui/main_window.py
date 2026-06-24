@@ -15,10 +15,14 @@ from __future__ import annotations
 
 import logging
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMainWindow, QSystemTrayIcon, QTabWidget, QWidget
 
 from ..services.autostart import AutostartManager
-from ..services.scheduler import SchedulerService
+from ..services.scheduler import SETTING_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS, SchedulerService
+from ..services.watchdog_task import SETTING_WATCHDOG_ENABLED
+from ..services import watchdog_task
+from ..watchdog import write_heartbeat
 from .context import AppContext
 from .screens.cabinets import CabinetsScreen
 from .screens.cells import CellsScreen
@@ -87,10 +91,36 @@ class MainWindow(QMainWindow):
             if app is not None:
                 app.setQuitOnLastWindowClosed(True)
         self.service.start()
+        self._start_heartbeat()
+        self._ensure_watchdog_task()
         if minimized and tray_ok:
             self.hide()
         else:
             self.show()
+
+    def _start_heartbeat(self) -> None:
+        """Touch the heartbeat file now and every 60 s so the external watchdog can
+        tell the app is alive."""
+        write_heartbeat()
+        self._heartbeat_timer = QTimer(self)
+        self._heartbeat_timer.setInterval(60_000)
+        self._heartbeat_timer.timeout.connect(write_heartbeat)
+        self._heartbeat_timer.start()
+
+    def _ensure_watchdog_task(self) -> None:
+        """Create/refresh (or remove) the Windows watchdog task per the saved setting."""
+        enabled = self.ctx.db.get_bool(SETTING_WATCHDOG_ENABLED, default=True)
+        interval = self.ctx.db.get_int(SETTING_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS)
+        try:
+            watchdog_task.apply(enabled, interval)
+        except Exception as e:  # noqa: BLE001 - task setup must never block startup
+            log.warning("Не удалось настроить задачу сторожа: %s", e)
+
+    def bring_to_front(self) -> None:
+        """Show + raise the window (used when a second launch pings us)."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def request_quit(self) -> None:
         """Allow the next close to actually close (used by the tray «Выход»)."""

@@ -84,7 +84,7 @@ def _db(db_path):
     return Database(db_path, FakeCipher())
 
 
-def _seed(db_path, *, staging, enabled=True):
+def _seed(db_path, *, enabled=True):
     db = _db(db_path)
     try:
         conn = db.add_connection(
@@ -93,7 +93,7 @@ def _seed(db_path, *, staging, enabled=True):
         cab = db.add_cabinet(Cabinet(name="Cab"), api_key="zzap1_key")
         return db.add_cell(Cell(name="C", enabled=enabled, connection_id=conn,
                                 cabinet_id=cab, code_templ=330017019, price_type="ZZap",
-                                warehouses=["W"], staging_mode=staging))
+                                warehouses=["W"]))
     finally:
         db.close()
 
@@ -130,7 +130,7 @@ def test_is_overdue_truth_table():
 
 def test_last_run_at_reads_most_recent(tmp_path):
     db_path = str(tmp_path / "a.db")
-    cid = _seed(db_path, staging=True)
+    cid = _seed(db_path)
     assert last_run_at(_db(db_path)) is None
     _insert_run(db_path, cid, "2026-06-24T09:00:00")
     _insert_run(db_path, cid, "2026-06-24T11:30:00")
@@ -140,7 +140,7 @@ def test_last_run_at_reads_most_recent(tmp_path):
 # --- scheduling wiring ------------------------------------------------------
 def test_start_adds_main_and_flush_jobs_with_catchup_settings(tmp_path):
     db_path = str(tmp_path / "a.db")
-    _seed(db_path, staging=True)
+    _seed(db_path)
     fake = FakeScheduler()
     svc, _ = _service(db_path, tmp_path / "work", scheduler=fake)
     svc.start()
@@ -156,7 +156,7 @@ def test_start_adds_main_and_flush_jobs_with_catchup_settings(tmp_path):
 
 def test_reschedule_swaps_main_trigger_live(tmp_path):
     db_path = str(tmp_path / "a.db")
-    _seed(db_path, staging=True)
+    _seed(db_path)
     fake = FakeScheduler()
     svc, _ = _service(db_path, tmp_path / "work", scheduler=fake)
     svc.start()
@@ -167,7 +167,7 @@ def test_reschedule_swaps_main_trigger_live(tmp_path):
 
 def test_reschedule_noop_before_start(tmp_path):
     db_path = str(tmp_path / "a.db")
-    _seed(db_path, staging=True)
+    _seed(db_path)
     fake = FakeScheduler()
     svc, _ = _service(db_path, tmp_path / "work", scheduler=fake)
     svc.reschedule(8)                       # job not added yet
@@ -177,7 +177,7 @@ def test_reschedule_noop_before_start(tmp_path):
 # --- offline catch-up (PC was off) ------------------------------------------
 def test_startup_catchup_runs_immediately_when_overdue(tmp_path):
     db_path = str(tmp_path / "a.db")
-    cid = _seed(db_path, staging=True)
+    cid = _seed(db_path)
     _insert_run(db_path, cid,
                 (datetime.now() - timedelta(hours=10)).isoformat(timespec="seconds"))
     fake = FakeScheduler()
@@ -189,7 +189,7 @@ def test_startup_catchup_runs_immediately_when_overdue(tmp_path):
 
 def test_no_catchup_when_recent(tmp_path):
     db_path = str(tmp_path / "a.db")
-    cid = _seed(db_path, staging=True)
+    cid = _seed(db_path)
     _insert_run(db_path, cid, datetime.now().isoformat(timespec="seconds"))
     fake = FakeScheduler()
     svc, _ = _service(db_path, tmp_path / "work", scheduler=fake)
@@ -198,19 +198,9 @@ def test_no_catchup_when_recent(tmp_path):
 
 
 # --- run primitives ---------------------------------------------------------
-def test_run_all_now_respects_staging(tmp_path):
-    db_path = str(tmp_path / "a.db")
-    _seed(db_path, staging=True)
-    svc, up = _service(db_path, tmp_path / "work")
-    summary = svc.run_all_now()
-    assert summary.staged == 1
-    assert summary.posted == 0
-    assert up.calls == []                   # nothing sent in staging
-
-
 def test_run_all_now_posts_a_real_cell(tmp_path):
     db_path = str(tmp_path / "a.db")
-    _seed(db_path, staging=False)
+    _seed(db_path)
     svc, up = _service(db_path, tmp_path / "work")
     summary = svc.run_all_now()
     assert summary.posted == 1
@@ -221,7 +211,7 @@ def test_run_all_now_posts_a_real_cell(tmp_path):
 # --- pending flush (network was down, then back) ----------------------------
 def test_flush_skips_when_offline(tmp_path):
     db_path = str(tmp_path / "a.db")
-    _seed(db_path, staging=False)
+    _seed(db_path)
     svc, up = _service(db_path, tmp_path / "work", network_check=lambda: False)
     summary = svc.flush_pending()
     assert summary.skipped is True
@@ -230,7 +220,7 @@ def test_flush_skips_when_offline(tmp_path):
 
 def test_flush_skips_when_a_run_holds_the_lock(tmp_path):
     db_path = str(tmp_path / "a.db")
-    _seed(db_path, staging=True)
+    _seed(db_path)
     svc, _ = _service(db_path, tmp_path / "work")
     svc._run_lock.acquire()
     try:
@@ -241,7 +231,7 @@ def test_flush_skips_when_a_run_holds_the_lock(tmp_path):
 
 def test_flush_resends_pending_once_network_returns(tmp_path):
     db_path = str(tmp_path / "a.db")
-    _seed(db_path, staging=False)
+    _seed(db_path)
     up = RecUp()
     svc, _ = _service(db_path, tmp_path / "work", uploader=up)
 
