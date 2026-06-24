@@ -94,8 +94,7 @@ class TrayController(QObject):
         if self._last is not None:
             s = self._last
             self._act_last.setText(
-                f"Последние: отправлено {s.posted}, staging {s.staged}, "
-                f"ошибок {s.failed + s.errors}")
+                f"Последние: отправлено {s.posted}, ошибок {s.failed + s.errors}")
 
     # --- actions ----------------------------------------------------------
     def _run_all(self) -> None:
@@ -131,8 +130,7 @@ class TrayController(QObject):
         if summary.kind == KIND_FLUSH:
             msg = f"Досыл отложенного: отправлено {summary.posted}."
         else:
-            msg = (f"Выгрузка завершена: отправлено {summary.posted}, "
-                   f"staging {summary.staged}, ошибок {bad}.")
+            msg = f"Выгрузка завершена: отправлено {summary.posted}, ошибок {bad}."
         icon = (QSystemTrayIcon.MessageIcon.Warning if bad
                 else QSystemTrayIcon.MessageIcon.Information)
         self.tray.showMessage("ZZap Sync", msg, icon, 5000)

@@ -13,11 +13,12 @@ from openpyxl import Workbook, load_workbook
 from app.db.dal import Database
 from app.db.models import Cabinet, Cell, Connection1C
 from app.services.cell_runner import (CellRunner, RUN_ERROR, RUN_FAIL, RUN_OK,
-                                       RUN_RESEND_OK, RUN_STAGED)
+                                       RUN_RESEND_OK)
 from conftest import FakeCipher, make_rows
 from engine.config import ZzapConfig
 from engine.delivery import Delivery
 from engine.exclusions import read_exclusion_articles
+from engine.zzap_client import ZzapPermanentError
 
 _DEFAULT_URL = "https://b52-api.zzap.pro/api/client/v1/price1c/upload"
 
@@ -56,7 +57,7 @@ def db(tmp_path):
         database.close()
 
 
-def _seed_cell(db, *, staging=False, enabled=True, code_templ=330017019,
+def _seed_cell(db, *, enabled=True, code_templ=330017019,
                warehouses=None, api_url=None, api_key="zzap1_key",
                exclusion_list_id=None):
     conn = db.add_connection(
@@ -68,7 +69,7 @@ def _seed_cell(db, *, staging=False, enabled=True, code_templ=330017019,
         name="Cell A", enabled=enabled, connection_id=conn, cabinet_id=cab,
         code_templ=code_templ, price_type="ZZap",
         warehouses=warehouses if warehouses is not None else ["Квант (Новые) 3 этаж"],
-        staging_mode=staging, exclusion_list_id=exclusion_list_id))
+        exclusion_list_id=exclusion_list_id))
     return cell_id, conn, cab
 
 
@@ -79,22 +80,10 @@ def _runner(db, tmp_path, *, rows=None, uploader=None):
                       uploader=uploader or RecordingUploader())
 
 
-def test_staging_builds_file_but_does_not_post(db, tmp_path):
-    cell_id, *_ = _seed_cell(db, staging=True)
-    up = RecordingUploader()
-    res = _runner(db, tmp_path, uploader=up).run_cell(cell_id)
-
-    assert res.status == RUN_STAGED
-    assert res.posted is False
-    assert up.calls == []                       # nothing sent
-    assert Path(res.file_path).exists()         # but the file was built
-    assert db.list_runs(cell_id=cell_id)[0].status == RUN_STAGED
-
-
 def test_real_upload_uses_cabinet_api_url_and_records_ok(db, tmp_path):
     # Guards against a wrong-host upload: the cabinet's stored api_url must flow through.
     custom = "https://other-host.example/api/client/v1/price1c/upload"
-    cell_id, *_ = _seed_cell(db, staging=False, api_url=custom)
+    cell_id, *_ = _seed_cell(db, api_url=custom)
     up = RecordingUploader()
     res = _runner(db, tmp_path, uploader=up).run_cell(cell_id)
 
@@ -111,18 +100,8 @@ def test_real_upload_uses_cabinet_api_url_and_records_ok(db, tmp_path):
     assert run.status == RUN_OK and run.rows_sent == 2
 
 
-def test_global_staging_kill_switch_blocks_a_real_cell(db, tmp_path):
-    cell_id, *_ = _seed_cell(db, staging=False)
-    db.set_bool("staging_mode", True)            # global kill-switch ON
-    up = RecordingUploader()
-    res = _runner(db, tmp_path, uploader=up).run_cell(cell_id)
-
-    assert res.status == RUN_STAGED
-    assert up.calls == []
-
-
 def test_upload_failure_stages_pending_then_retry_resends(db, tmp_path):
-    cell_id, *_ = _seed_cell(db, staging=False)
+    cell_id, *_ = _seed_cell(db)
     failing = RecordingUploader(error=RuntimeError("ZZap вернул 500"))
     res = _runner(db, tmp_path, uploader=failing).run_cell(cell_id)
 
@@ -144,7 +123,7 @@ def test_upload_failure_stages_pending_then_retry_resends(db, tmp_path):
 def test_offline_network_check_stages_pending_without_posting(db, tmp_path):
     # Phase 4: a known-down network must NOT attempt the POST — the built file is
     # staged to pending and a later retry (network back) resends it.
-    cell_id, *_ = _seed_cell(db, staging=False)
+    cell_id, *_ = _seed_cell(db)
     up = RecordingUploader()                     # would succeed if it were ever called
     runner = CellRunner(db, tmp_path / "work",
                         source_factory=lambda cfg: FakeSource(make_rows()),
@@ -164,8 +143,34 @@ def test_offline_network_check_stages_pending_without_posting(db, tmp_path):
     assert delivery.get_pending() is None
 
 
+def test_permanent_zzap_error_is_error_and_not_staged(db, tmp_path):
+    # Phase 5: a permanent rejection (bad key / wrong url / rejected content) must NOT
+    # be staged for endless retry — it's ERROR with the actionable message, no pending.
+    cell_id, *_ = _seed_cell(db)
+    bad = RecordingUploader(error=ZzapPermanentError("ZZap вернул 401 — неверный ключ."))
+    res = _runner(db, tmp_path, uploader=bad).run_cell(cell_id)
+
+    assert res.status == RUN_ERROR
+    assert res.posted is False
+    assert len(bad.calls) == 1                   # it was attempted...
+    delivery = Delivery(tmp_path / "work" / f"cell_{cell_id}")
+    assert delivery.get_pending() is None        # ...but nothing left to retry
+
+
+def test_zero_rows_real_send_is_blocked(db, tmp_path):
+    # Phase 5 safety: 0 rows would WIPE the template (uploads fully replace) -> refuse.
+    cell_id, *_ = _seed_cell(db)
+    up = RecordingUploader()
+    res = _runner(db, tmp_path, rows=[], uploader=up).run_cell(cell_id)
+
+    assert res.status == RUN_ERROR
+    assert up.calls == []                        # nothing posted
+    assert "0 строк" in res.message
+    assert db.list_runs(cell_id=cell_id)[0].status == RUN_ERROR
+
+
 def test_missing_warehouses_is_error_and_sends_nothing(db, tmp_path):
-    cell_id, *_ = _seed_cell(db, staging=False, warehouses=[])
+    cell_id, *_ = _seed_cell(db, warehouses=[])
     up = RecordingUploader()
     res = _runner(db, tmp_path, uploader=up).run_cell(cell_id)
 
@@ -190,22 +195,21 @@ def test_imported_excel_exclusions_filter_a_run(db, tmp_path):
     list_id = db.import_exclusion_list(articles, name="из Excel")
     assert "A-1" in db.get_exclusion_list(list_id).articles.splitlines()
 
-    cell_id, *_ = _seed_cell(db, staging=True)
+    cell_id, *_ = _seed_cell(db)
     db.assign_exclusion_list_to_cell(cell_id, list_id)
     res = _runner(db, tmp_path).run_cell(cell_id)
 
-    assert res.status == RUN_STAGED
+    assert res.status == RUN_OK   # uploaded (file built then sent)
     numbers = [row[1] for row in load_workbook(res.file_path).active.iter_rows(values_only=True)]
     assert numbers == ["B-2"]   # A-1 excluded; only B-2 remains
     assert res.rows_built == 1
 
 
 def test_run_all_enabled_runs_only_enabled_cells(db, tmp_path):
-    c1, conn, cab = _seed_cell(db, staging=True, enabled=True)
+    c1, conn, cab = _seed_cell(db, enabled=True)
     db.add_cell(Cell(name="off", enabled=False, connection_id=conn, cabinet_id=cab,
-                     code_templ=1, price_type="ZZap", warehouses=["W"],
-                     staging_mode=True))
+                     code_templ=1, price_type="ZZap", warehouses=["W"]))
     results = _runner(db, tmp_path).run_all_enabled()
 
     assert [r.cell_id for r in results] == [c1]
-    assert results[0].status == RUN_STAGED
+    assert results[0].status == RUN_OK

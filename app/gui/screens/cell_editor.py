@@ -108,10 +108,11 @@ class CellEditor(QDialog):
         self.sp_templ = QSpinBox()
         self.sp_templ.setRange(0, 2_147_483_647)
         self.sp_templ.setGroupSeparatorShown(False)
+        # Non-editable: a click opens the list so the user picks a discovered price
+        # type (free text only invites typos that yield 0 rows). A saved/offline value
+        # is always kept in the list by _populate_price_types so nothing is lost.
         self.cmb_price = QComboBox()
-        self.cmb_price.setEditable(True)
-        self.cb_staging = QCheckBox(
-            "Режим staging для этой ячейки (собирать файл, НЕ отправлять)")
+        self.cmb_price.setPlaceholderText("— загрузите из 1С и выберите —")
 
         form.addRow("Название", self.ed_name)
         form.addRow("", self.cb_enabled)
@@ -119,7 +120,6 @@ class CellEditor(QDialog):
         form.addRow("Подключение 1С", self.cmb_conn)
         form.addRow("Код шаблона (code_templ)", self.sp_templ)
         form.addRow("Вид цены", self.cmb_price)
-        form.addRow("", self.cb_staging)
         root.addLayout(form)
 
         # Warehouses (multi-select) + load-from-1C
@@ -171,7 +171,6 @@ class CellEditor(QDialog):
     def _load(self, cell: Cell) -> None:
         self.ed_name.setText(cell.name)
         self.cb_enabled.setChecked(cell.enabled)
-        self.cb_staging.setChecked(cell.staging_mode)
         self.sp_templ.setValue(int(cell.code_templ or 0))
 
         self.cmb_cabinet.clear()
@@ -206,14 +205,22 @@ class CellEditor(QDialog):
         combo.setCurrentIndex(idx if idx >= 0 else 0)
 
     def _populate_price_types(self, price_types: list[str], current: str) -> None:
+        """Fill the price-type dropdown from discovery, keeping the saved value.
+
+        The current/saved value is always included (so an offline or previously-chosen
+        type isn't lost) and re-selected; with no saved value the box stays unselected
+        so the user makes a deliberate pick from the loaded list.
+        """
+        current = (current or "").strip()
         self.cmb_price.blockSignals(True)
         self.cmb_price.clear()
-        seen = []
-        for p in price_types:
+        seen: list[str] = []
+        for p in list(price_types) + ([current] if current else []):
+            p = (p or "").strip()
             if p and p not in seen:
                 seen.append(p)
         self.cmb_price.addItems(seen)
-        self.cmb_price.setCurrentText(current or "")
+        self.cmb_price.setCurrentIndex(self.cmb_price.findText(current) if current else -1)
         self.cmb_price.blockSignals(False)
 
     def _populate_warehouses(self, warehouses: list[str], checked: list[str]) -> None:
@@ -370,5 +377,4 @@ class CellEditor(QDialog):
             exclusion_list_id=self._exclusion_list_id,
             include_header=c.include_header,
             columns=c.columns,
-            staging_mode=self.cb_staging.isChecked(),
         )

@@ -87,7 +87,7 @@ def test_cell_editor_round_trips(qapp, ctx):
     conn_id, cab_id = _seed(ctx)
     cell = Cell(name="Ячейка А", enabled=True, connection_id=conn_id,
                 cabinet_id=cab_id, code_templ=330017019, price_type="ZZap",
-                warehouses=["Склад 1"], staging_mode=True)
+                warehouses=["Склад 1"])
     cell.id = ctx.db.add_cell(cell)
     editor = CellEditor(ctx, AsyncRunner(), ctx.db.get_cell(cell.id))
     out = editor.result_cell()
@@ -96,13 +96,11 @@ def test_cell_editor_round_trips(qapp, ctx):
     assert out.price_type == "ZZap"
     assert out.warehouses == ["Склад 1"]
     assert out.cabinet_id == cab_id
-    assert out.staging_mode is True
 
 
-def test_new_cell_editor_defaults_to_staging(qapp, ctx):
+def test_new_cell_editor_defaults_to_disabled(qapp, ctx):
     _seed(ctx)
     editor = CellEditor(ctx, AsyncRunner(), None)
-    assert editor.cb_staging.isChecked() is True
     assert editor.cb_enabled.isChecked() is False
 
 
@@ -201,3 +199,26 @@ def test_tray_delivers_run_summary_on_ui_thread(qapp, ctx):
     assert any("Открыть окно" in t for t in texts)
     assert any("Выход" in t for t in texts)
     win.close()
+
+
+def test_status_screen_shows_pending_indicator(qapp, ctx):
+    from engine.delivery import Delivery
+
+    from app.gui.screens.status import StatusScreen
+
+    conn_id, cab_id = _seed(ctx)
+    cell = Cell(name="C", enabled=True, connection_id=conn_id, cabinet_id=cab_id,
+                code_templ=1, price_type="ZZap", warehouses=["W"])
+    cell.id = ctx.db.add_cell(cell)
+
+    # Stage a pending file for this cell (network was down at upload time).
+    cell_dir = ctx.work_dir / f"cell_{cell.id}"
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    built = cell_dir / "price.xlsx"
+    built.write_bytes(b"xlsx")
+    Delivery(cell_dir).mark_pending(built, "price.xlsx", "нет сети", rows=42)
+
+    screen = StatusScreen(ctx)
+    screen.cmb_cell.setCurrentIndex(screen.cmb_cell.findData(cell.id))
+    assert screen.lbl_pending.isHidden() is False
+    assert "Ожидает досылки" in screen.lbl_pending.text()

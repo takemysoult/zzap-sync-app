@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout,
                                QHeaderView, QLabel, QPlainTextEdit, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from engine.delivery import Delivery
+
 from .. import theme
 from ..context import AppContext
 
@@ -47,6 +49,12 @@ class StatusScreen(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(
             5, QHeaderView.ResizeMode.Stretch)
         root.addWidget(self.table, 2)
+
+        self.lbl_pending = QLabel("")
+        self.lbl_pending.setWordWrap(True)
+        self.lbl_pending.setProperty("role", "hint")
+        self.lbl_pending.setVisible(False)
+        root.addWidget(self.lbl_pending)
 
         root.addWidget(QLabel("Журнал выбранной ячейки:"))
         self.journal = QPlainTextEdit()
@@ -84,7 +92,24 @@ class StatusScreen(QWidget):
                 if col == 2 and r.status in theme.STATUS_COLORS:  # colour the status cell
                     item.setForeground(theme.color(theme.STATUS_COLORS[r.status]))
                 self.table.setItem(row, col, item)
+        self._refresh_pending(cell_id)
         self._load_journal(cell_id)
+
+    def _refresh_pending(self, cell_id) -> None:
+        """Show whether the selected cell has a file waiting to be re-sent."""
+        if cell_id is None:
+            self.lbl_pending.setVisible(False)
+            return
+        pending = Delivery(Path(self.ctx.work_dir) / f"cell_{cell_id}").read_state().get("pending")
+        if not pending:
+            self.lbl_pending.setVisible(False)
+            return
+        since = pending.get("since", "?")
+        rows = pending.get("rows", "?")
+        self.lbl_pending.setText(
+            f"⏳ Ожидает досылки с {since} · строк: {rows}. "
+            "Уйдёт автоматически при появлении сети или по кнопке «Дослать отложенное».")
+        self.lbl_pending.setVisible(True)
 
     def _load_journal(self, cell_id) -> None:
         if cell_id is None:

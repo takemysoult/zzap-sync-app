@@ -246,10 +246,31 @@ catch-up/flush не пересекаются; `is_overdue`/`last_run_at` — ч�
 плюс проверен реальный старт приложения (трей+планировщик+catch-up, чистый выход) и реальный
 `HKCU\...\Run`. **Боевые плановые выгрузки сверяются вместе с live-валидацией Phase 1/2.**
 
-### Phase 5 — Reliability, security, UX polish
+### Phase 5 — Reliability, security, UX polish  ✅ CODE COMPLETE (2026-06-24; offline-tested; publish-confirmation deferred)
 - Robust error surfacing (toasts/notifications), retry/pending UX, log rotation.
 - Secret handling review; least-privilege 1C user guidance; optional HTTPS notes for OData.
 - Edge cases: locked files, partial 1C data, ZZap 4xx mapping to clear messages.
+
+**Реализовано (2026-06-24):**
+- **Таксономия ошибок ZZap** (`engine/zzap_client.py`): `ZzapPermanentError` (401/403/404/413/
+  400/прочие 4xx, `success:false`) vs `ZzapTransientError` (408/429/5xx, таймаут/нет сети) —
+  понятные RU-сообщения с кодом. `CellRunner` теперь различает: постоянная ошибка ⇒ **ERROR**
+  (без бесконечного досыла, видно «что чинить»), временная/неизвестная ⇒ **FAIL** + pending
+  (как раньше). Существующий контракт payload не тронут.
+- **Защита от пустой выгрузки** (`CellRunner.run_cell`): боевой POST из 0 строк ОТМЕНЯЕТСЯ
+  (ERROR), т.к. загрузка ПОЛНОСТЬЮ заменяет шаблон и пустой файл его бы очистил (§4). В staging
+  пустой файл по-прежнему просто собирается.
+- **Ротация логов** (`app/logging_setup.py` + `paths.logs_dir()`): консоль + `RotatingFileHandler`
+  → `%LOCALAPPDATA%\ZZapSync\logs\app.log` (UTF-8, 1 МБ × 5). `app.gui` использует её вместо
+  `basicConfig`. Покрытие занятого файла (`build_xlsx` PermissionError → временное имя) уже было.
+- **UX досыла/pending:** кнопка «Дослать отложенное» на вкладке «Ячейки» (досыл выбранной ячейки
+  через `retry_pending`, под общим run-замком планировщика); индикатор «⏳ Ожидает досылки …» на
+  вкладке «Журнал» для выбранной ячейки (чтение `state.json`, без обращения к ZZap).
+- **Тесты:** 111 проходят офлайн (маппинг кодов/типы исключений, permanent⇒ERROR/0 строк⇒ERROR,
+  ротация лога, индикатор pending). Проверен реальный старт приложения (лог пишется, catch-up
+  отрабатывает, чистый выход).
+- **Отложено до live-валидации:** подтверждение публикации через `GET /stat/prices` (форму ответа
+  нужно проверить на живом кабинете) — реализуем неблокирующе и под флагом во время Section A.
 - **Post-upload publish confirmation (optional, `GET /api/client/v1/stat/prices`)**: the
   only extra ZZap method worth adding later. After a successful upload, read back the number
   of *published* rows for the cell's `code_templ` and show it in the cell status — confirming
@@ -261,11 +282,32 @@ catch-up/flush не пересекаются; `is_overdue`/`last_run_at` — ч�
   must never turn a successful `OK` upload into a `FAIL`).
 **Exit:** unattended for days without intervention; clear diagnostics when something breaks.
 
-### Phase 6 — Packaging & delivery
+### Phase 6 — Packaging & delivery + production hardening  ✅ DONE (2026-06-24)
 - PyInstaller build, app icon, version, first-run wizard.
 - Installer + autostart registration; uninstall cleanup.
 - User guide (RU) + this roadmap kept current.
 **Exit:** double-click install, configure, runs.
+
+**Реализовано (2026-06-24):**
+- **Staging убран** целиком (по решению пользователя — не нужен конечному). Каждая включённая
+  ячейка отправляет в ZZap по-настоящему. Защита остаётся: **0 строк → ERROR** (не затирать
+  шаблон). `cell.staging_mode` и глобальный стоп-кран удалены из модели/БД/GUI/движка.
+- **Один экземпляр** (`app/single_instance.py`): `QSharedMemory` + `QLocalServer` — второй запуск
+  поднимает уже открытое окно и выходит.
+- **Сторож от падений** (`app/watchdog.py` + `app/services/watchdog_task.py`): приложение пишет
+  heartbeat раз в минуту; внешняя задача Планировщика Windows (раз в `interval_hours`, только когда
+  ПК включён) проверяет heartbeat и при падении **перезапускает приложение + уведомляет**
+  (ctypes MessageBox). Это ловит нативный обвал (COM/Qt) без Python-трейсбека. Тумблер вкл/выкл —
+  в Настройках (`watchdog_enabled`, по умолчанию ВКЛ).
+- **Упаковка** (`packaging/`): PyInstaller (onedir, без консоли, иконка, со схемой БД и
+  win32crypt/QtNetwork) → **Inno Setup** установщик в Program Files (UAC), ярлыки, удаление
+  сторожа+автозапуска при деинсталляции. Версия — `app.__version__` (1.0.0).
+- **Релиз:** `dist/ZZapSync-Setup-1.0.0.exe` собран и выложен в GitHub Releases (`v1.0.0`).
+- **Тесты:** 118 офлайн (добавлены watchdog/watchdog_task/single_instance; staging-тесты убраны/
+  переписаны). Собранный exe проверен на запуск (Qt/COM/схема грузятся, сторож-задача не плодится
+  при выключенном тумблере).
+**После ввода в строй:** отключить старую задачу CLI в Планировщике (тот же шаблон 330017019),
+чтобы не было двойных выгрузок.
 
 ### Phase 7 — Optional / future
 - Multiple 1C connections (the second cabinet's other base; OData source as an alternative
@@ -276,8 +318,9 @@ catch-up/flush не пересекаются; `is_overdue`/`last_run_at` — ч�
 
 ## 6. Cross-cutting requirements
 
-- **Safety first:** default to **staging mode** for any newly added cell; real upload only
-  after the user confirms. Never silently publish.
+- **Safety first:** new cells default to **disabled**; manual «Запустить» asks for confirmation;
+  a 0-row build is refused (never wipe a template). (The dev-only staging mode was removed in
+  Phase 6 — the end user doesn't need it.)
 - **No plaintext secrets.** Mask keys in the UI; encrypt at rest.
 - **Idempotent & observable:** every run leaves a history row + journal line.
 - **Reuse, don't rewrite** the proven engine; changes there need tests + review.
@@ -291,5 +334,6 @@ catch-up/flush не пересекаются; `is_overdue`/`last_run_at` — ч�
 
 A user installs the app, enters 1C admin credentials, the app lists their warehouses and
 price types, they add 2+ cells (template + warehouse + price type), set "every N hours",
-test in staging, then enable real uploads — and the app keeps each ZZap template in sync on
-schedule, with visible per-cell status and safe retry on failures.
+enable them — and the app keeps each ZZap template in sync on schedule, minimized to the
+tray, with visible per-cell status, safe retry on failures, and a watchdog that restarts it
+if it stops.
