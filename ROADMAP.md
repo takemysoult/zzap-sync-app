@@ -200,7 +200,7 @@ together with Phase 1 live validation.
 **Exit met (config/run):** a non-technical user can configure connection/cabinets/cells and run
 a cell from the UI without touching files. (Full live exercise pairs with Phase 1/2 validation.)
 
-### Phase 4 — Scheduler & background (system tray)
+### Phase 4 — Scheduler & background (system tray)  ✅ CODE COMPLETE (2026-06-24; offline-tested + real-platform boot smoke)
 **Модель выбрана (2026-06-23): планировщик ВНУТРИ приложения + системный трей** (НЕ Планировщик
 заданий Windows). RU UI, safety-first, без бизнес-логики в планировщике (reuse `CellRunner`).
 - **APScheduler внутри приложения** — интервальная задача из настроек (`interval_hours`),
@@ -231,6 +231,20 @@ a cell from the UI without touching files. (Full live exercise pairs with Phase 
 **Exit:** приложение выгружает по расписанию свёрнутым в трей; переживает сон/выключение и обрыв
 сети — пропущенные и отложенные выгрузки уходят сразу при возобновлении; уважает глобальный
 staging-стоп-кран; стартует с Windows; интервал меняется на лету.
+
+**Реализовано (2026-06-24):** `app/services/scheduler.py` (`SchedulerService` поверх APScheduler
+`BackgroundScheduler`: интервальная задача `coalesce=True, misfire_grace_time=None, max_instances=1`;
+частый проход досыла `flush_pending`; `threading.Lock` сериализует все запуски — плановый/ручной/
+catch-up/flush не пересекаются; `is_overdue`/`last_run_at` — чистое решение о catch-up при старте;
+`reschedule` меняет интервал на лету; `request_run_*` — одноразовые задачи для трея, не блокируя UI),
+`app/services/net.py` (`is_online`), `app/services/autostart.py` (`AutostartManager` поверх
+`HKCU\...\Run`, бэкенд реестра инжектируется), `app/gui/tray.py` (`QSystemTrayIcon` + мост Qt-сигнала
+для доставки результатов на UI-поток). `CellRunner` получил необязательный `network_check`
+(офлайн → pending без HTTP; по умолчанию None — поведение Phase 2 не меняется). Каждый запуск
+открывает свой `Database` на рабочем потоке APScheduler; `Com1C` сам делает Co(Un)Initialize.
+**Тесты:** 103 проходят офлайн (FakeScheduler — без реальных таймеров; реестр — словарный фейк),
+плюс проверен реальный старт приложения (трей+планировщик+catch-up, чистый выход) и реальный
+`HKCU\...\Run`. **Боевые плановые выгрузки сверяются вместе с live-валидацией Phase 1/2.**
 
 ### Phase 5 — Reliability, security, UX polish
 - Robust error surfacing (toasts/notifications), retry/pending UX, log rotation.

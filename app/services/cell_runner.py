@@ -79,12 +79,18 @@ class CellRunner:
     def __init__(self, db: Database, work_dir: str | Path, *,
                  source_factory: SourceFactory = ComPriceSource,
                  uploader: Uploader = upload_price,
-                 connection_manager: ConnectionManager | None = None) -> None:
+                 connection_manager: ConnectionManager | None = None,
+                 network_check: Callable[[], bool] | None = None) -> None:
         self.db = db
         self.work_dir = Path(work_dir)
         self._source_factory = source_factory
         self._uploader = uploader
         self._cm = connection_manager or ConnectionManager()
+        # Optional pre-POST reachability probe (Phase 4 offline recovery). When it
+        # returns False the file is staged to pending WITHOUT an HTTP attempt — the
+        # flush pass re-sends it once the network returns. Default None = no probe
+        # (behaviour identical to Phase 2).
+        self._network_check = network_check
 
     # --- public ----------------------------------------------------------
     def run_cell(self, cell: Cell | int) -> RunResult:
@@ -195,23 +201,19 @@ class CellRunner:
             return RunResult(cell.id, RUN_ERROR, rows_built=rows_built,
                              file_path=str(file_path), run_id=run_id, message=msg)
 
+        # Phase 4: skip the POST entirely when the network is known-down — stage the
+        # built file for the flush pass instead of provoking a guaranteed FAIL.
+        if self._network_check is not None and not self._network_check():
+            log.info("Cell %s: сеть недоступна, откладываю для досылки.", cell.id)
+            return self._stage_pending(cell, delivery, run_id, file_path, rows_built,
+                                       "Нет подключения к сети.")
+
         try:
             data = self._uploader(zcfg, file_path, file_path.name)
         except Exception as e:  # noqa: BLE001 - transient: stage for retry
             reason = error_text(e)
             log.warning("Cell %s upload failed: %s", cell.id, reason)
-            if delivery.mark_pending(file_path, file_path.name, reason, rows=rows_built):
-                self.db.finish_run(run_id, self._now(), RUN_FAIL,
-                                   rows_note=str(rows_built),
-                                   message=f"Ошибка отправки, отложено для досылки: {reason}")
-                return RunResult(cell.id, RUN_FAIL, rows_built=rows_built,
-                                 file_path=str(file_path), run_id=run_id, message=reason)
-            # Staging the file itself failed -> nothing to retry, surface as ERROR.
-            self.db.finish_run(run_id, self._now(), RUN_ERROR,
-                               rows_note=str(rows_built),
-                               message=f"Ошибка отправки, файл не удалось отложить: {reason}")
-            return RunResult(cell.id, RUN_ERROR, rows_built=rows_built,
-                             file_path=str(file_path), run_id=run_id, message=reason)
+            return self._stage_pending(cell, delivery, run_id, file_path, rows_built, reason)
 
         delivery.record_success(file_path.name, rows_built, _file_url(data))
         self.db.finish_run(run_id, self._now(), RUN_OK, rows_sent=rows_built,
@@ -219,6 +221,27 @@ class CellRunner:
         return RunResult(cell.id, RUN_OK, rows_built=rows_built, rows_sent=rows_built,
                          file_path=str(file_path), run_id=run_id, posted=True,
                          message="Загружено в ZZap.")
+
+    def _stage_pending(self, cell: Cell, delivery: Delivery, run_id: int,
+                       file_path: Path, rows_built: int, reason: str) -> RunResult:
+        """Stage a built-but-unsent file for later retry.
+
+        Returns FAIL (retryable via `retry_pending`) when the file is staged, or ERROR
+        when even staging the pending file fails (nothing to retry). Shared by the
+        upload-threw path and the network-offline pre-check.
+        """
+        if delivery.mark_pending(file_path, file_path.name, reason, rows=rows_built):
+            self.db.finish_run(run_id, self._now(), RUN_FAIL,
+                               rows_note=str(rows_built),
+                               message=f"Ошибка отправки, отложено для досылки: {reason}")
+            return RunResult(cell.id, RUN_FAIL, rows_built=rows_built,
+                             file_path=str(file_path), run_id=run_id, message=reason)
+        # Staging the file itself failed -> nothing to retry, surface as ERROR.
+        self.db.finish_run(run_id, self._now(), RUN_ERROR,
+                           rows_note=str(rows_built),
+                           message=f"Ошибка отправки, файл не удалось отложить: {reason}")
+        return RunResult(cell.id, RUN_ERROR, rows_built=rows_built,
+                         file_path=str(file_path), run_id=run_id, message=reason)
 
     # --- helpers ---------------------------------------------------------
     def _zzap_config(self, cell: Cell, cabinet) -> ZzapConfig | None:

@@ -1,28 +1,35 @@
 """Settings screen — upload interval, the GLOBAL staging kill-switch, autostart.
 
 These are key/value rows in the ``setting`` table. The global staging switch is the
-``staging_mode`` key read by CellRunner (when ON, nothing is ever sent, regardless
-of per-cell settings). The interval and autostart are consumed by the Phase 4
-scheduler/tray; here they are just persisted.
+``staging_mode`` key read by CellRunner (when ON, nothing is ever sent, regardless of
+per-cell settings). Saving the interval **reschedules the running scheduler live** (no
+restart); toggling autostart adds/removes the per-user ``HKCU\\...\\Run`` entry. The
+scheduler service + autostart manager are injected by the main window (both default to
+None so the screen still builds standalone in tests).
 """
 from __future__ import annotations
 
 from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGroupBox, QHBoxLayout,
                                QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
+from ...services.autostart import (SETTING_AUTOSTART, AutostartManager,
+                                   launch_command)
 from ...services.cell_runner import SETTING_GLOBAL_STAGING
+from ...services.scheduler import (DEFAULT_INTERVAL_HOURS, SETTING_INTERVAL_HOURS,
+                                   SchedulerService)
 from .. import theme
 from ..context import AppContext
 
-SETTING_INTERVAL_HOURS = "interval_hours"
-SETTING_AUTOSTART = "autostart"
-_DEFAULT_INTERVAL = 5
-
 
 class SettingsScreen(QWidget):
-    def __init__(self, ctx: AppContext, parent: QWidget | None = None) -> None:
+    def __init__(self, ctx: AppContext,
+                 scheduler_service: SchedulerService | None = None,
+                 autostart_manager: AutostartManager | None = None,
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.ctx = ctx
+        self._service = scheduler_service
+        self._autostart = autostart_manager
         self._build()
         self.reload()
 
@@ -44,8 +51,9 @@ class SettingsScreen(QWidget):
         form.addRow("", self.cb_autostart)
         root.addWidget(box)
 
-        note = QLabel("Интервал и автозапуск применяются фоновым планировщиком "
-                      "(добавляется в Phase 4). Глобальный staging действует сразу.")
+        note = QLabel("Интервал применяется сразу (планировщик перепланируется без "
+                      "перезапуска). Автозапуск — отдельная запись в реестре пользователя. "
+                      "Глобальный staging действует немедленно.")
         note.setWordWrap(True)
         note.setProperty("role", "hint")
         root.addWidget(note)
@@ -64,14 +72,27 @@ class SettingsScreen(QWidget):
 
     def reload(self) -> None:
         self.sp_interval.setValue(
-            self.ctx.db.get_int(SETTING_INTERVAL_HOURS, _DEFAULT_INTERVAL))
+            self.ctx.db.get_int(SETTING_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS))
         self.cb_staging.setChecked(
             self.ctx.db.get_bool(SETTING_GLOBAL_STAGING, default=False))
         self.cb_autostart.setChecked(
             self.ctx.db.get_bool(SETTING_AUTOSTART, default=False))
 
     def _save(self) -> None:
-        self.ctx.db.set_setting(SETTING_INTERVAL_HOURS, str(self.sp_interval.value()))
+        interval = self.sp_interval.value()
+        self.ctx.db.set_setting(SETTING_INTERVAL_HOURS, str(interval))
         self.ctx.db.set_bool(SETTING_GLOBAL_STAGING, self.cb_staging.isChecked())
         self.ctx.db.set_bool(SETTING_AUTOSTART, self.cb_autostart.isChecked())
-        theme.set_status(self.lbl_status, "Сохранено.", "ok")
+
+        msgs = ["Сохранено."]
+        if self._service is not None:
+            self._service.reschedule(interval)
+            msgs.append("Планировщик перепланирован.")
+        if self._autostart is not None:
+            try:
+                self._autostart.apply(self.cb_autostart.isChecked(), launch_command())
+            except OSError as e:  # registry write failed — surface, don't crash
+                theme.set_status(self.lbl_status,
+                                 f"Сохранено, но автозапуск не изменён: {e}", "error")
+                return
+        theme.set_status(self.lbl_status, " ".join(msgs), "ok")

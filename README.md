@@ -61,6 +61,14 @@ Run the desktop app (from the 64-bit venv):
   cells (with live 1C dropdowns, exclusions import, duplicate banner, per-template checklist),
   settings, and status/journal screens. All COM/network/CellRunner work runs off the UI thread
   (a per-thread `Database` in workers); secrets are masked and never reloaded into fields.
+- **Phase 4 (Scheduler & system tray) — code complete.** APScheduler runs *inside* the app
+  (`app/services/scheduler.py`): an interval job (every N hours) runs all enabled cells, a frequent
+  pending-flush pass re-sends files staged while offline, and **offline recovery** is two-fold —
+  missed runs catch up immediately on resume (`coalesce` + a startup overdue check), and pending
+  files flush as soon as the network returns. The app runs minimized to the **system tray**
+  (`QSystemTrayIcon`, RU menu + notifications), starts with Windows (per-user `HKCU\...\Run`), and
+  reschedules live when the interval changes. A `threading.Lock` serialises every run; the staging
+  kill-switch is always honored. Scheduled uploads pair with Phase 1/2 live validation for sign-off.
 
-84 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 1/2 live validation,
-then Phase 4 (scheduler + system tray).
+103 tests pass. See `ROADMAP.md` §5 for the full phase plan. Next: Phase 1/2 live validation,
+then Phase 5 (reliability/polish) and Phase 6 (packaging).
