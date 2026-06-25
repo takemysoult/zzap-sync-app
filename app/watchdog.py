@@ -12,8 +12,10 @@ Python-исключения, — само приложение в таком с�
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -74,6 +76,24 @@ def _default_relaunch() -> None:
     subprocess.Popen(_relaunch_command(), close_fds=True)
 
 
+def _default_kill_stale() -> None:
+    """Kill any lingering app instance (the frozen exe) except this watchdog process.
+
+    A hung instance keeps holding the single-instance lock, which would make the
+    relaunched copy detect it and exit — so the app could never recover. Removing the
+    stale process first lets the fresh start become the primary. Only acts on the
+    frozen exe (in dev the app is ``python -m app.gui`` and we must not mass-kill python).
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    exe_name = Path(sys.executable).name           # ZZapSync.exe
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", exe_name, "/FI", f"PID ne {os.getpid()}"],
+                       capture_output=True, text=True)
+    except OSError as e:  # noqa: BLE001
+        log.warning("watchdog: не удалось завершить зависший экземпляр: %s", e)
+
+
 def _default_notify(text: str) -> None:
     try:
         import ctypes
@@ -85,14 +105,17 @@ def _default_notify(text: str) -> None:
 
 def run_watchdog(*, now: Callable[[], datetime] = datetime.now,
                  relaunch: Callable[[], None] = _default_relaunch,
-                 notify: Callable[[str], None] = _default_notify) -> int:
+                 notify: Callable[[str], None] = _default_notify,
+                 kill_stale: Callable[[], None] = _default_kill_stale) -> int:
     """Entry for ``app.gui --watchdog``. Returns 1 if it acted (app was down), else 0."""
     if not _watchdog_enabled():
         return 0
     if not app_is_down(_read_heartbeat(), now()):
-        return 0  # app is alive
+        return 0  # app is alive (fresh heartbeat)
     log.warning("watchdog: приложение не отвечает — перезапускаю.")
     try:
+        kill_stale()          # remove a hung instance so it can't block the restart
+        time.sleep(1.0)       # let the OS release the single-instance lock
         relaunch()
     except Exception as e:  # noqa: BLE001
         log.error("watchdog: не удалось перезапустить: %s", e)

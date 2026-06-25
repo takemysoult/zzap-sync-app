@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import multiprocessing
 import sys
 
 from .. import paths
@@ -37,6 +38,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Frozen-app guard: stop a re-executed child (e.g. via multiprocessing) from
+    # starting a second copy of the GUI.
+    multiprocessing.freeze_support()
     setup_logging()
     raw = argv if argv is not None else sys.argv[1:]
     args = _parse_args(raw)
@@ -66,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     ctx = AppContext()
+    ctx.db.finalize_orphan_runs()   # clean up runs interrupted by a previous crash
     service = SchedulerService(db_factory=ctx.new_db, work_dir=ctx.work_dir,
                                network_check=is_online)
     window = MainWindow(ctx, service)

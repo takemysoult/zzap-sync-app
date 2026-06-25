@@ -22,6 +22,9 @@ log = logging.getLogger(__name__)
 SETTING_WATCHDOG_ENABLED = "watchdog_enabled"
 TASK_NAME = "ZZapSync Watchdog"
 WATCHDOG_FLAG = "--watchdog"
+# Liveness check cadence (минуты). Частая проверка нужна, чтобы быстро поднять
+# приложение, если оно зависло/упало — а не ждать целый интервал выгрузки.
+WATCHDOG_EVERY_MINUTES = 15
 
 # runner(args) -> exit code (0 = success)
 Runner = Callable[[list[str]], int]
@@ -45,15 +48,13 @@ def watchdog_command() -> str:
     return f'"{py}" -m app.gui {WATCHDOG_FLAG}'
 
 
-def build_create_args(interval_hours: int, command: str) -> list[str]:
-    interval = max(1, int(interval_hours))
+def build_create_args(command: str) -> list[str]:
     return ["schtasks", "/create", "/tn", TASK_NAME, "/tr", command,
-            "/sc", "HOURLY", "/mo", str(interval), "/it", "/f"]
+            "/sc", "MINUTE", "/mo", str(WATCHDOG_EVERY_MINUTES), "/it", "/f"]
 
 
-def install(interval_hours: int, command: str | None = None, *,
-            runner: Runner = _default_runner) -> bool:
-    code = runner(build_create_args(interval_hours, command or watchdog_command()))
+def install(command: str | None = None, *, runner: Runner = _default_runner) -> bool:
+    code = runner(build_create_args(command or watchdog_command()))
     if code != 0:
         log.warning("Не удалось создать задачу сторожа (schtasks код %s).", code)
     return code == 0
@@ -63,10 +64,9 @@ def remove(*, runner: Runner = _default_runner) -> bool:
     return runner(["schtasks", "/delete", "/tn", TASK_NAME, "/f"]) == 0
 
 
-def apply(enabled: bool, interval_hours: int, *,
-          runner: Runner = _default_runner) -> None:
-    """Sync the scheduled task to the desired on/off state + interval in one call."""
+def apply(enabled: bool, *, runner: Runner = _default_runner) -> None:
+    """Sync the scheduled task to the desired on/off state in one call."""
     if enabled:
-        install(interval_hours, runner=runner)
+        install(runner=runner)
     else:
         remove(runner=runner)

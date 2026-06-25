@@ -31,12 +31,15 @@ def test_run_watchdog_noop_when_app_alive(appdata):
     assert calls == []                      # didn't touch a healthy app
 
 
-def test_run_watchdog_relaunches_and_notifies_when_down(appdata):
+def test_run_watchdog_kills_relaunches_and_notifies_when_down(appdata):
     calls = []                              # no heartbeat written → app is down
     rc = run_watchdog(relaunch=lambda: calls.append("relaunch"),
-                      notify=lambda t: calls.append("notify"))
+                      notify=lambda t: calls.append("notify"),
+                      kill_stale=lambda: calls.append("kill"))
     assert rc == 1
-    assert "relaunch" in calls and "notify" in calls
+    # a hung instance is killed first, then a fresh copy is started + the user notified
+    assert calls.index("kill") < calls.index("relaunch")
+    assert "notify" in calls
 
 
 def test_run_watchdog_disabled_does_nothing(appdata):
