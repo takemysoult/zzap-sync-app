@@ -28,10 +28,18 @@ STALE_AFTER = timedelta(minutes=5)
 
 
 def write_heartbeat() -> None:
-    """Called by the running app on a timer — record 'I am alive at <now>'."""
+    """Called by the running app on a timer — record 'I am alive at <now>'.
+
+    Запись АТОМАРНА (temp-файл + os.replace): иначе сторож мог прочитать heartbeat ровно
+    в момент перезаписи (write_text сначала обнуляет файл), увидеть пустоту и ошибочно
+    счесть живое приложение упавшим. os.replace заменяет файл целиком одним действием —
+    читатель всегда видит либо старое, либо новое содержимое, но не пустоту.
+    """
     try:
-        paths.heartbeat_path().write_text(
-            datetime.now().isoformat(timespec="seconds"), encoding="utf-8")
+        p = paths.heartbeat_path()
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(datetime.now().isoformat(timespec="seconds"), encoding="utf-8")
+        os.replace(tmp, p)
     except OSError as e:  # never let a heartbeat write break the app
         log.debug("heartbeat write failed: %s", e)
 
@@ -117,12 +125,22 @@ def _default_notify(text: str) -> None:
 def run_watchdog(*, now: Callable[[], datetime] = datetime.now,
                  relaunch: Callable[[], None] = _default_relaunch,
                  notify: Callable[[str], None] = _default_notify,
-                 kill_stale: Callable[[], None] = _default_kill_stale) -> int:
+                 kill_stale: Callable[[], None] = _default_kill_stale,
+                 read_heartbeat: Callable[[], datetime | None] = _read_heartbeat,
+                 recheck_delay: float = 3.0) -> int:
     """Entry for ``app.gui --watchdog``. Returns 1 if it acted (app was down), else 0."""
     if not _watchdog_enabled():
         return 0
-    if not app_is_down(_read_heartbeat(), now()):
+    if not app_is_down(read_heartbeat(), now()):
         return 0  # app is alive (fresh heartbeat)
+    # Дебаунс: одного «упал» мало. Heartbeat пишется часто; единичный сбойный/устаревший
+    # замер не должен приводить к убийству живого приложения. Ждём и перепроверяем — и
+    # действуем, только если приложение ВСЁ ЕЩЁ не отвечает.
+    if recheck_delay > 0:
+        time.sleep(recheck_delay)
+    if not app_is_down(read_heartbeat(), now()):
+        log.info("watchdog: heartbeat снова свежий — ложная тревога, ничего не делаю.")
+        return 0
     log.warning("watchdog: приложение не отвечает — перезапускаю.")
     try:
         kill_stale()          # remove a hung instance so it can't block the restart

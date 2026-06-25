@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from app import paths
-from app.watchdog import app_is_down, run_watchdog, write_heartbeat
+from app.watchdog import _read_heartbeat, app_is_down, run_watchdog, write_heartbeat
 
 
 def test_app_is_down_truth_table():
@@ -35,11 +35,33 @@ def test_run_watchdog_kills_relaunches_and_notifies_when_down(appdata):
     calls = []                              # no heartbeat written → app is down
     rc = run_watchdog(relaunch=lambda: calls.append("relaunch"),
                       notify=lambda t: calls.append("notify"),
-                      kill_stale=lambda: calls.append("kill"))
+                      kill_stale=lambda: calls.append("kill"),
+                      recheck_delay=0)      # no real sleep in tests
     assert rc == 1
     # a hung instance is killed first, then a fresh copy is started + the user notified
     assert calls.index("kill") < calls.index("relaunch")
     assert "notify" in calls
+
+
+def test_run_watchdog_debounces_transient_bad_read(appdata):
+    # First read looks down (e.g. heartbeat read mid-write), but the re-check is fresh —
+    # the watchdog must NOT kill a healthy app on a single racy read.
+    reads = iter([None, datetime.now()])
+    calls = []
+    rc = run_watchdog(relaunch=lambda: calls.append("relaunch"),
+                      notify=lambda t: calls.append("notify"),
+                      kill_stale=lambda: calls.append("kill"),
+                      read_heartbeat=lambda: next(reads), recheck_delay=0)
+    assert rc == 0
+    assert calls == []                      # no kill / relaunch on a transient blip
+
+
+def test_write_heartbeat_is_atomic_and_parseable(appdata):
+    write_heartbeat()
+    assert _read_heartbeat() is not None                       # readable timestamp
+    # no leftover temp file that a reader could trip over
+    assert not (paths.heartbeat_path().with_name(
+        paths.heartbeat_path().name + ".tmp")).exists()
 
 
 def test_run_watchdog_disabled_does_nothing(appdata):
