@@ -379,6 +379,25 @@ class Database:
             (finished_at, status, rows_sent, rows_note, message, run_id))
         self._conn.commit()
 
+    def finalize_orphan_runs(self) -> int:
+        """Mark runs left as RUNNING by a crash/hang as interrupted (called at startup).
+
+        A run that never reached finish_run (the app died mid-upload) otherwise stays
+        RUNNING forever and clutters the journal. Returns how many rows were fixed.
+        """
+        cur = self._conn.execute(
+            "UPDATE run_history SET status='ERROR', finished_at=?, "
+            "message='Прервано: приложение было остановлено во время выгрузки.' "
+            "WHERE status='RUNNING' AND finished_at IS NULL",
+            (None,))
+        # set finished_at to started_at for clarity (avoid leaving it NULL)
+        self._conn.execute(
+            "UPDATE run_history SET finished_at=started_at "
+            "WHERE status='ERROR' AND finished_at IS NULL "
+            "AND message='Прервано: приложение было остановлено во время выгрузки.'")
+        self._conn.commit()
+        return cur.rowcount
+
     def list_runs(self, cell_id: int | None = None, limit: int = 100) -> list[RunHistory]:
         if cell_id is None:
             rows = self._conn.execute(

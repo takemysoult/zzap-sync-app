@@ -97,9 +97,9 @@ class SettingsScreen(QWidget):
                 theme.set_status(self.lbl_status,
                                  f"Сохранено, но автозапуск не изменён: {e}", "error")
                 return
-        # Watchdog task tracks the on/off toggle + the current interval.
+        # Watchdog task tracks the on/off toggle (its check cadence is fixed).
         try:
-            watchdog_task.apply(self.cb_watchdog.isChecked(), interval)
+            watchdog_task.apply(self.cb_watchdog.isChecked())
         except Exception as e:  # noqa: BLE001 - never block saving on task errors
             theme.set_status(self.lbl_status,
                              f"Сохранено, но сторож не изменён: {e}", "error")

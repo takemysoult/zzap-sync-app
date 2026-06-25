@@ -72,6 +72,27 @@ def test_cell_defaults_and_json_round_trip(db):
     assert len(db.list_cells(enabled_only=True)) == 1
 
 
+def test_finalize_orphan_runs_marks_interrupted(db):
+    from app.db.models import RunHistory
+    cab = db.add_cabinet(Cabinet(name="c"))
+    conn = db.add_connection(Connection1C(name="b"))
+    cid = db.add_cell(Cell(name="C", connection_id=conn, cabinet_id=cab,
+                           code_templ=1, price_type="ZZap", warehouses=["W"]))
+    ok = db.add_run(RunHistory(cell_id=cid, started_at="2026-06-24T10:00:00",
+                               finished_at="2026-06-24T10:01:00", status="OK"))
+    orphan = db.add_run(RunHistory(cell_id=cid, started_at="2026-06-24T11:00:00",
+                                   status="RUNNING"))  # crash left it RUNNING
+
+    fixed = db.finalize_orphan_runs()
+    assert fixed == 1
+    runs = {r.id: r for r in db.list_runs(cell_id=cid)}
+    assert runs[ok].status == "OK"                     # completed run untouched
+    assert runs[orphan].status == "ERROR"              # orphan marked interrupted
+    assert runs[orphan].finished_at == "2026-06-24T11:00:00"
+    assert "Прервано" in (runs[orphan].message or "")
+    assert db.finalize_orphan_runs() == 0              # idempotent
+
+
 def test_settings_typed_accessors(db):
     db.set_setting("interval_hours", "5")
     assert db.get_int("interval_hours") == 5
