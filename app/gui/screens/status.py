@@ -6,6 +6,7 @@ cell's work dir). Pure reads — no business logic here.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout,
@@ -18,6 +19,17 @@ from .. import theme
 from ..context import AppContext
 
 _JOURNAL_TAIL_LINES = 200
+
+
+def _fmt_dt(value: str | None) -> str:
+    """ISO-время выгрузки → «ДД.ММ.ГГГГ ЧЧ:ММ:СС» (раньше в узкой колонке было видно
+    только дату, а время после «T» обрезалось)."""
+    if not value:
+        return ""
+    try:
+        return datetime.fromisoformat(value).strftime("%d.%m.%Y %H:%M:%S")
+    except ValueError:
+        return value
 
 
 class StatusScreen(QWidget):
@@ -46,8 +58,11 @@ class StatusScreen(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(
-            5, QHeaderView.ResizeMode.Stretch)
+        hdr = self.table.horizontalHeader()
+        # «Начало»/«Конец» — по содержимому, чтобы дата И время помещались целиком.
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         root.addWidget(self.table, 2)
 
         self.lbl_pending = QLabel("")
@@ -80,8 +95,8 @@ class StatusScreen(QWidget):
         self.table.setRowCount(len(runs))
         for row, r in enumerate(runs):
             values = [
-                r.started_at or "",
-                r.finished_at or "",
+                _fmt_dt(r.started_at),
+                _fmt_dt(r.finished_at),
                 r.status or "",
                 "" if r.rows_sent is None else str(r.rows_sent),
                 r.rows_note or "",

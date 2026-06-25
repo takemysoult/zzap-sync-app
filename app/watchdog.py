@@ -97,8 +97,19 @@ def _default_kill_stale() -> None:
 def _default_notify(text: str) -> None:
     try:
         import ctypes
-        # MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND
-        ctypes.windll.user32.MessageBoxW(0, text, "ZZap Sync", 0x40 | 0x10000)
+        # MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND.
+        flags = 0x40 | 0x10000
+        user32 = ctypes.windll.user32
+        # ВАЖНО: НЕ блокирующее модальное окно. Раньше MessageBoxW ждал нажатия «ОК» и
+        # держал процесс сторожа живым (зависший процесс + окно копились при перезапусках).
+        # MessageBoxTimeoutW сам закрывается через 20с, поэтому сторож не зависает.
+        if hasattr(user32, "MessageBoxTimeoutW"):
+            user32.MessageBoxTimeoutW(0, text, "ZZap Sync", flags, 0, 20000)
+        else:  # запасной путь: показать в демон-потоке, не блокируя выход процесса
+            import threading
+            threading.Thread(
+                target=lambda: user32.MessageBoxW(0, text, "ZZap Sync", flags),
+                daemon=True).start()
     except Exception as e:  # noqa: BLE001
         log.warning("watchdog notify failed: %s", e)
 

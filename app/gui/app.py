@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import multiprocessing
+import os
 import sys
 
 from .. import paths
@@ -88,17 +89,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.run_all or args.run_cell is not None:
         return _run_headless(args)
 
+    # Диагностика крашей. Страховку старта взводим САМОЙ ПЕРВОЙ — до тяжёлых импортов
+    # (Qt) — чтобы зависание на старте (например, сразу после загрузки ПК) оставило дамп
+    # стеков в logs/stall.log. Хлебные крошки ниже показывают, до какого шага дошёл старт.
+    from .. import diagnostics
+    diagnostics.arm_startup_guard()
+    log.info("=== ZZap Sync GUI старт: pid=%s frozen=%s minimized=%s ===",
+             os.getpid(), getattr(sys, "frozen", False), args.minimized)
+    diagnostics.start_resource_sampler()
+
+    log.info("Старт: импортирую Qt…")
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
 
-    from .. import diagnostics
     from ..single_instance import SingleInstance
     from .theme import apply_theme
 
     paths.ensure_dirs()
-    # Диагностика крашей: фоновый сэмплер ресурсов (видим утечки в логах) и детектор
-    # зависаний (нативный/Qt-зависон оставит дамп стеков в logs/stall.log).
-    diagnostics.start_resource_sampler()
+    log.info("Старт: создаю QApplication…")
     app = QApplication(sys.argv)
     app.setApplicationName("ZZap Sync")
     app.setOrganizationName("ZZap Sync")
@@ -113,19 +121,24 @@ def main(argv: list[str] | None = None) -> int:
     _pulse_timer.start()
 
     # Single instance: a second launch raises the running window and exits.
+    log.info("Старт: проверяю единственный экземпляр…")
     single = SingleInstance()
     if not single.is_primary():
         single.ping_primary()
         log.info("ZZap Sync уже запущен — открываю существующее окно и выхожу.")
         return 0
 
+    log.info("Старт: открываю базу и планировщик…")
     ctx = AppContext()
     ctx.db.finalize_orphan_runs()   # clean up runs interrupted by a previous crash
     service = SchedulerService(db_factory=ctx.new_db, work_dir=ctx.work_dir,
                                network_check=is_online)
     window = MainWindow(ctx, service)
     single.activated.connect(window.bring_to_front)
+    log.info("Старт: запускаю фоновый режим (трей/расписание)…")
     window.start_background(minimized=args.minimized)
+    diagnostics.disarm_startup_guard()   # старт успешен — снимаем страховку
+    log.info("Старт завершён — вхожу в цикл событий.")
     try:
         return app.exec()
     finally:

@@ -166,6 +166,33 @@ def start_resource_sampler(interval_s: float = SAMPLE_INTERVAL_SECONDS) -> threa
 # ---------------------------------------------------------------------------
 # Детектор зависаний (faulthandler + проверка пульса UI-потока)
 # ---------------------------------------------------------------------------
+def arm_startup_guard(timeout_s: float = 90.0) -> None:
+    """Одноразовая страховка от ЗАВИСАНИЯ НА СТАРТЕ (до того, как заработает пульс-детектор).
+
+    Если процесс за ``timeout_s`` секунд не успеет дойти до `disarm_startup_guard`
+    (например, завис в импорте Qt/COM сразу после загрузки ПК), faulthandler сбросит
+    стеки всех потоков в logs/stall.log. После успешного старта guard снимается, чтобы
+    не сработать на штатной работе.
+    """
+    f = _open_stall_file()
+    try:
+        if f is not None:
+            faulthandler.enable(file=f)
+            f.write(f"\n----- запуск {datetime.now().isoformat(timespec='seconds')}: "
+                    f"страховка старта взведена на {timeout_s:.0f}с -----\n")
+        faulthandler.dump_traceback_later(timeout_s, repeat=False, file=f or sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        log.debug("arm_startup_guard failed: %s", e)
+
+
+def disarm_startup_guard() -> None:
+    """Снять страховку старта — приложение успешно запустилось."""
+    try:
+        faulthandler.cancel_dump_traceback_later()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def pulse() -> None:
     """Вызывается с UI-потока (через QTimer): «цикл событий жив прямо сейчас»."""
     global _last_pulse
