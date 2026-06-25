@@ -32,9 +32,41 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                         help="запуститься свёрнутым в системный трей (для автозапуска)")
     parser.add_argument("--watchdog", action="store_true",
                         help="разовая проверка сторожа (перезапуск при падении) и выход")
+    parser.add_argument("--run-all", action="store_true",
+                        help="разовая выгрузка всех включённых ячеек и выход (дочерний процесс)")
+    parser.add_argument("--run-cell", type=int, default=None, metavar="ID",
+                        help="разовая выгрузка одной ячейки по id и выход (дочерний процесс)")
     # Ignore unknown args (e.g. Qt's own) so autostart command quirks don't crash.
     args, _unknown = parser.parse_known_args(argv)
     return args
+
+
+def _run_headless(args: argparse.Namespace) -> int:
+    """Дочерний режим: выполнить ОДНУ выгрузку и выйти (без Qt/трея/одиночного экземпляра).
+
+    Планировщик запускает выгрузку именно так — в коротком дочернем процессе: после выхода
+    ОС освобождает среду 1С COM (~400 МБ) и все хэндлы, а нативное зависание COM не может
+    заморозить GUI (родитель убивает зависший процесс по таймауту). Результаты пишутся в
+    run_history — родитель их оттуда и читает.
+    """
+    from ..services.cell_runner import CellRunner
+    paths.ensure_dirs()
+    ctx = AppContext()
+    try:
+        ctx.db.finalize_orphan_runs()
+        runner = CellRunner(ctx.db, ctx.work_dir, network_check=is_online)
+        if args.run_cell is not None:
+            log.info("Дочерний процесс: выгрузка ячейки #%s.", args.run_cell)
+            runner.run_cell(args.run_cell)
+        else:
+            log.info("Дочерний процесс: выгрузка всех включённых ячеек.")
+            runner.run_all_enabled()
+    except Exception as e:  # noqa: BLE001 - не падать молча; результат уже в run_history
+        log.exception("Дочерняя выгрузка завершилась с ошибкой: %s", e)
+        return 1
+    finally:
+        ctx.close()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,17 +82,35 @@ def main(argv: list[str] | None = None) -> int:
         from ..watchdog import run_watchdog
         return run_watchdog()
 
+    # Headless run (child process launched by the scheduler): one sync, then exit.
+    # Handled before QApplication / single-instance so it never opens a window and is
+    # not blocked by the guard (the running GUI is the primary instance).
+    if args.run_all or args.run_cell is not None:
+        return _run_headless(args)
+
+    from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
 
+    from .. import diagnostics
     from ..single_instance import SingleInstance
     from .theme import apply_theme
 
     paths.ensure_dirs()
+    # Диагностика крашей: фоновый сэмплер ресурсов (видим утечки в логах) и детектор
+    # зависаний (нативный/Qt-зависон оставит дамп стеков в logs/stall.log).
+    diagnostics.start_resource_sampler()
     app = QApplication(sys.argv)
     app.setApplicationName("ZZap Sync")
     app.setOrganizationName("ZZap Sync")
     app.setQuitOnLastWindowClosed(False)  # close-to-tray must not quit the app
     apply_theme(app)
+
+    # Пульс с UI-потока раз в секунду — если он замолчит, детектор снимет дампы.
+    diagnostics.install_stall_detector()
+    _pulse_timer = QTimer(app)
+    _pulse_timer.setInterval(1000)
+    _pulse_timer.timeout.connect(diagnostics.pulse)
+    _pulse_timer.start()
 
     # Single instance: a second launch raises the running window and exits.
     single = SingleInstance()

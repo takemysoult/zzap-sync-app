@@ -11,6 +11,7 @@ SchedulerService. По умолчанию проверяется хост раб
 from __future__ import annotations
 
 import logging
+import os
 import socket
 
 log = logging.getLogger(__name__)
@@ -26,6 +27,10 @@ def is_online(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     Никогда не бросает исключение — любая ошибка сети/DNS трактуется как «офлайн».
     """
+    # Сервисный переключатель: ZZAP_FORCE_OFFLINE=1 заставляет считать сеть недоступной
+    # (для обслуживания/диагностики — выгрузка соберётся, но не уйдёт в ZZap, а отложится).
+    if os.environ.get("ZZAP_FORCE_OFFLINE"):
+        return False
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True

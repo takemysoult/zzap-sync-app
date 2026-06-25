@@ -28,6 +28,9 @@ CoInitialize/CoUninitialize. Результат доставляется в UI �
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import sys
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -52,6 +55,30 @@ DEFAULT_INTERVAL_HOURS = 5
 FLUSH_MINUTES = 10
 JOB_MAIN = "zzap_main_interval"
 JOB_FLUSH = "zzap_pending_flush"
+
+# Каждая плановая/ручная выгрузка выполняется в КОРОТКОМ ДОЧЕРНЕМ ПРОЦЕССЕ (см. ниже): он
+# грузит среду 1С COM (~400 МБ), делает выгрузку и завершается, возвращая ОС всю память и
+# все хэндлы. Так нет накопления ресурсов (события RADAR_PRE_LEAK_64) и нативный обвал COM
+# не может заморозить GUI — зависший дочерний процесс родитель убивает по таймауту.
+DEFAULT_RUN_TIMEOUT_SECONDS = float(os.environ.get("ZZAP_RUN_TIMEOUT_SECONDS", "1800"))
+_CREATE_NO_WINDOW = 0x08000000  # не мигать консолью в dev-режиме (python.exe)
+
+
+def build_run_command(cell_id: int | None) -> list[str]:
+    """Команда запуска ОДНОЙ выгрузки в дочернем процессе (frozen .exe или dev-модуль)."""
+    if getattr(sys, "frozen", False):
+        base = [sys.executable]                      # ZZapSync.exe --run-all
+    else:
+        exe = Path(sys.executable)
+        pyw = exe.with_name("pythonw.exe")           # без консольного окна, если есть
+        base = [str(pyw if pyw.exists() else exe), "-m", "app.gui"]
+    return base + (["--run-cell", str(cell_id)] if cell_id is not None else ["--run-all"])
+
+
+def _default_launcher(cmd: list[str], timeout: float) -> None:
+    """Выполнить дочерний процесс до конца; при таймауте — убить (бросит TimeoutExpired)."""
+    creationflags = _CREATE_NO_WINDOW if os.name == "nt" else 0
+    subprocess.run(cmd, timeout=timeout, creationflags=creationflags)
 
 # RunSummary.kind values.
 KIND_SCHEDULED = "scheduled"
@@ -127,7 +154,11 @@ class SchedulerService:
                  network_check: Callable[[], bool] | None = None,
                  listener: Callable[[RunSummary], None] | None = None,
                  runner_factory: RunnerFactory | None = None,
-                 now: Callable[[], datetime] = datetime.now) -> None:
+                 now: Callable[[], datetime] = datetime.now,
+                 run_in_subprocess: bool = True,
+                 launcher: Callable[[list[str], float], None] | None = None,
+                 command_builder: Callable[[int | None], list[str]] | None = None,
+                 run_timeout: float = DEFAULT_RUN_TIMEOUT_SECONDS) -> None:
         self._db_factory = db_factory
         self._work_dir = Path(work_dir)
         self._scheduler = scheduler or BackgroundScheduler()
@@ -135,6 +166,14 @@ class SchedulerService:
         self._listener = listener
         self._runner_factory = runner_factory or self._default_runner_factory
         self._now = now
+        # Плановая/ручная/catch-up выгрузка идёт в дочернем процессе (см. модульный
+        # комментарий). Тесты ставят run_in_subprocess=False и гоняют CellRunner в потоке
+        # с подставными источником/загрузчиком. Досыл (flush) лёгкий (без COM) — он всегда
+        # в процессе, поэтому на него этот флаг не влияет.
+        self._run_in_subprocess = run_in_subprocess
+        self._launcher = launcher or _default_launcher
+        self._command_builder = command_builder or build_run_command
+        self._run_timeout = run_timeout
         # Serialises every run path (scheduled tick, manual, catch-up, flush) so two
         # batches never interleave COM / double-upload the same cell.
         self._run_lock = threading.Lock()
@@ -246,7 +285,17 @@ class SchedulerService:
 
     # --- internals --------------------------------------------------------
     def _execute(self, kind: str, cell_id: int | None) -> RunSummary:
-        """Run the batch on a fresh Database, build a summary, notify the listener."""
+        """Run a batch (in a child process by default) and notify the listener."""
+        if self._run_in_subprocess:
+            return self._execute_in_subprocess(kind, cell_id)
+        return self._execute_in_thread(kind, cell_id)
+
+    def _execute_in_thread(self, kind: str, cell_id: int | None) -> RunSummary:
+        """Run the batch on a fresh Database, build a summary, notify the listener.
+
+        In-process path: used by tests (injected fake source/uploader). Production runs
+        go through ``_execute_in_subprocess`` instead.
+        """
         started = self._now_iso()
         db = self._db_factory()
         try:
@@ -261,6 +310,61 @@ class SchedulerService:
                              finished_at=self._now_iso())
         self._emit(summary)
         return summary
+
+    def _execute_in_subprocess(self, kind: str, cell_id: int | None) -> RunSummary:
+        """Run the batch in a SHORT-LIVED child process, then read results from run_history.
+
+        The child (``app.gui --run-all`` / ``--run-cell ID``) loads the 1C COM runtime,
+        does the upload, and exits — releasing ~400 МБ and every OS handle. A child that
+        hangs (native COM fault) is killed by ``run_timeout`` and its half-written run is
+        finalised as ERROR, so the GUI stays responsive and the journal stays clean.
+        """
+        started = self._now_iso()
+        before_id = self._max_run_id()
+        timed_out = False
+        try:
+            self._launcher(self._command_builder(cell_id), self._run_timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            log.error("Выгрузка (%s) превысила лимит %.0fс — дочерний процесс остановлен.",
+                      kind, self._run_timeout)
+        except Exception as e:  # noqa: BLE001 - launch failure: surface as an empty batch
+            log.error("Не удалось запустить дочерний процесс выгрузки: %s", e)
+
+        db = self._db_factory()
+        try:
+            if timed_out:
+                db.finalize_orphan_runs()   # killed child left RUNNING rows -> ERROR
+            results = self._results_after(db, before_id, cell_id)
+        finally:
+            db.close()
+        summary = RunSummary(kind=kind, results=results, started_at=started,
+                             finished_at=self._now_iso())
+        self._emit(summary)
+        return summary
+
+    def _max_run_id(self) -> int:
+        db = self._db_factory()
+        try:
+            runs = db.list_runs(limit=1)
+            return runs[0].id if runs and runs[0].id is not None else 0
+        finally:
+            db.close()
+
+    def _results_after(self, db: Database, before_id: int,
+                       cell_id: int | None) -> list[RunResult]:
+        """Reconstruct RunResults from the run_history rows the child just wrote."""
+        runs = db.list_runs(cell_id=cell_id, limit=1000)
+        out: list[RunResult] = []
+        for r in runs:
+            if r.id is None or r.id <= before_id:
+                continue
+            out.append(RunResult(
+                cell_id=r.cell_id, status=r.status,
+                rows_built=r.rows_sent or 0, rows_sent=r.rows_sent,
+                message=r.message or "", run_id=r.id,
+                posted=r.status in (RUN_OK, RUN_RESEND_OK)))
+        return out
 
     def _startup_catchup_if_overdue(self, interval: int) -> None:
         db = self._db_factory()

@@ -10,9 +10,13 @@ from datetime import datetime, timedelta
 
 from app.db.dal import Database
 from app.db.models import Cabinet, Cell, Connection1C, RunHistory
+import subprocess
+
+from app.db.models import RunHistory
 from app.services.cell_runner import RUN_RESEND_OK, CellRunner
-from app.services.scheduler import (JOB_FLUSH, JOB_MAIN, KIND_CATCHUP, SchedulerService,
-                                     is_overdue, last_run_at)
+from app.services.scheduler import (JOB_FLUSH, JOB_MAIN, KIND_CATCHUP, KIND_SCHEDULED,
+                                     SchedulerService, build_run_command, is_overdue,
+                                     last_run_at)
 from apscheduler.triggers.interval import IntervalTrigger
 from conftest import FakeCipher, make_rows
 
@@ -115,7 +119,8 @@ def _service(db_path, work_dir, *, scheduler=None, network_check=None, uploader=
 
     svc = SchedulerService(db_factory=lambda: _db(db_path), work_dir=work_dir,
                            scheduler=scheduler or FakeScheduler(),
-                           network_check=network_check, runner_factory=runner_factory)
+                           network_check=network_check, runner_factory=runner_factory,
+                           run_in_subprocess=False)   # in-thread: drive the fake source/uploader
     return svc, up
 
 
@@ -206,6 +211,65 @@ def test_run_all_now_posts_a_real_cell(tmp_path):
     assert summary.posted == 1
     assert summary.ok == 1
     assert len(up.calls) == 1
+
+
+# --- child-process execution (production path) ------------------------------
+def _subprocess_service(db_path, work_dir, *, launcher, scheduler=None):
+    """Service in production (subprocess) mode with an INJECTED launcher (no real child)."""
+    return SchedulerService(db_factory=lambda: _db(db_path), work_dir=work_dir,
+                            scheduler=scheduler or FakeScheduler(),
+                            run_in_subprocess=True, launcher=launcher,
+                            command_builder=lambda cid: ["fake", str(cid)])
+
+
+def test_build_run_command_dev_module():
+    # Dev (not frozen): launches the GUI module headless with the right flag.
+    assert build_run_command(None)[-1] == "--run-all"
+    assert build_run_command(7)[-2:] == ["--run-cell", "7"]
+    assert "app.gui" in build_run_command(None)
+
+
+def test_execute_in_subprocess_reads_child_results(tmp_path):
+    db_path = str(tmp_path / "a.db")
+    cid = _seed(db_path)
+
+    # Fake launcher = the "child": it writes a completed OK run to run_history, like the
+    # real headless process would, then returns (process exited cleanly).
+    def launcher(cmd, timeout):
+        db = _db(db_path)
+        try:
+            rid = db.add_run(RunHistory(cell_id=cid, started_at="2026-06-25T10:00:00",
+                                        status="RUNNING"))
+            db.finish_run(rid, "2026-06-25T10:00:30", "OK", rows_sent=4203)
+        finally:
+            db.close()
+
+    svc = _subprocess_service(db_path, tmp_path / "work", launcher=launcher)
+    summary = svc.run_all_now(kind=KIND_SCHEDULED)
+    assert summary.posted == 1 and summary.ok == 1
+    assert summary.results[0].rows_sent == 4203
+
+
+def test_execute_in_subprocess_timeout_marks_orphan_error(tmp_path):
+    db_path = str(tmp_path / "a.db")
+    cid = _seed(db_path)
+
+    # Child started a run then hung; the launcher leaves a RUNNING row and raises
+    # TimeoutExpired (as subprocess.run does when it kills the stuck child).
+    def launcher(cmd, timeout):
+        db = _db(db_path)
+        try:
+            db.add_run(RunHistory(cell_id=cid, started_at="2026-06-25T10:00:00",
+                                   status="RUNNING"))
+        finally:
+            db.close()
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    svc = _subprocess_service(db_path, tmp_path / "work", launcher=launcher)
+    summary = svc.run_cell_now(cid)
+    assert summary.errors == 1                       # orphan finalised as ERROR
+    assert summary.posted == 0
+    assert "Прервано" in (summary.results[0].message or "")
 
 
 # --- pending flush (network was down, then back) ----------------------------

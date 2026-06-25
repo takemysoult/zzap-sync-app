@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderV
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ...db.models import Cell
-from ...services.cell_runner import RUN_OK, RUN_RESEND_OK, CellRunner, RunResult
+from ...services.cell_runner import (RUN_ERROR, RUN_OK, RUN_RESEND_OK, CellRunner,
+                                     RunResult)
 from ...services.duplicates import SHARED_WAREHOUSE, find_duplicate_risks
 from ...services.scheduler import SchedulerService
 from .. import theme
@@ -170,7 +171,7 @@ class CellsScreen(QWidget):
                 f"{cell.code_templ} будет заменён)."):
             return
         self._set_running(True, f"Выполняю ячейку «{cell.name}»…")
-        self.runner.submit(lambda: self._guarded(lambda: _run_one(self.ctx, cell_id)),
+        self.runner.submit(lambda: self._do_run_one(cell_id),
                            self._on_run_done, self._on_run_err)
 
     def _run_all(self) -> None:
@@ -183,7 +184,7 @@ class CellsScreen(QWidget):
                 f"Отправка в ZZap затронет включённых ячеек: {len(cells)}."):
             return
         self._set_running(True, f"Выполняю включённые ячейки ({len(cells)})…")
-        self.runner.submit(lambda: self._guarded(lambda: _run_all(self.ctx)),
+        self.runner.submit(self._do_run_all,
                            self._on_run_all_done, self._on_run_err)
 
     def _retry_selected(self) -> None:
@@ -191,14 +192,32 @@ class CellsScreen(QWidget):
         if cell_id is None:
             return
         self._set_running(True, "Досылаю отложенное…")
-        self.runner.submit(lambda: self._guarded(lambda: _retry_one(self.ctx, cell_id)),
+        self.runner.submit(lambda: self._do_retry(cell_id),
                            self._on_retry_done, self._on_run_err)
 
-    def _guarded(self, fn):
-        """Serialise a manual run against scheduled ticks when a scheduler is wired."""
+    # --- worker-thread jobs (run off the UI thread via AsyncRunner) -------
+    # A manual run goes through the scheduler so it executes in the SAME short-lived
+    # CHILD PROCESS as scheduled runs — the GUI never loads the 1C COM runtime (~400 МБ)
+    # and stays light. Without a scheduler (smoke tests) it falls back to in-process.
+    def _do_run_one(self, cell_id: int) -> RunResult:
         if self._service is not None:
-            return self._service.run_under_lock(fn)
-        return fn()
+            summary = self._service.run_cell_now(cell_id)
+            return summary.results[0] if summary.results else RunResult(
+                cell_id=cell_id, status=RUN_ERROR,
+                message="Выгрузка не вернула результата (см. журнал).")
+        return _run_one_inproc(self.ctx, cell_id)
+
+    def _do_run_all(self) -> list[RunResult]:
+        if self._service is not None:
+            return self._service.run_all_now().results
+        return _run_all_inproc(self.ctx)
+
+    def _do_retry(self, cell_id: int) -> RunResult | None:
+        # Retry only re-POSTs an already-built pending file (no 1C COM), so it stays
+        # in-process — but still serialised against scheduled ticks via the run-lock.
+        if self._service is not None:
+            return self._service.run_under_lock(lambda: _retry_inproc(self.ctx, cell_id))
+        return _retry_inproc(self.ctx, cell_id)
 
     def _confirm_real(self, detail: str) -> bool:
         return QMessageBox.warning(
@@ -246,8 +265,10 @@ class CellsScreen(QWidget):
                          "ok" if good else "error")
 
 
-# Worker-thread jobs: each opens its OWN Database (DAL is thread-affine).
-def _run_one(ctx: AppContext, cell_id: int) -> RunResult:
+# In-process fallbacks (used only when no scheduler is wired, e.g. smoke tests). Each
+# opens its OWN Database (DAL is thread-affine). Production manual runs go through the
+# scheduler's child process instead — see CellsScreen._do_run_one/_do_run_all.
+def _run_one_inproc(ctx: AppContext, cell_id: int) -> RunResult:
     db = ctx.new_db()
     try:
         return CellRunner(db, ctx.work_dir).run_cell(cell_id)
@@ -255,7 +276,7 @@ def _run_one(ctx: AppContext, cell_id: int) -> RunResult:
         db.close()
 
 
-def _retry_one(ctx: AppContext, cell_id: int) -> RunResult | None:
+def _retry_inproc(ctx: AppContext, cell_id: int) -> RunResult | None:
     db = ctx.new_db()
     try:
         return CellRunner(db, ctx.work_dir).retry_pending(cell_id)
@@ -263,7 +284,7 @@ def _retry_one(ctx: AppContext, cell_id: int) -> RunResult | None:
         db.close()
 
 
-def _run_all(ctx: AppContext) -> list[RunResult]:
+def _run_all_inproc(ctx: AppContext) -> list[RunResult]:
     db = ctx.new_db()
     try:
         return CellRunner(db, ctx.work_dir).run_all_enabled()
