@@ -19,6 +19,10 @@ dist/
 *.spec
 !packaging/zzapsync.spec   # the PyInstaller spec is source — keep it tracked
 
+# VC++ redistributable bundled into the installer — downloaded at build time
+# (see packaging/build.ps1), not source. ~25 MB, must not bloat the repo.
+packaging/redist/
+
 # --- Application runtime data (machine-specific, may contain real data) ---
 *.db
 *.sqlite
