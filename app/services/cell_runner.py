@@ -3,7 +3,8 @@
 Pipeline for a single cell (ROADMAP §3 / PROMPT B.1):
 
     build_price_query(warehouses, price type)
-      -> ComPriceSource.fetch_rows()   (1C COM)
+      -> ComPriceSource.fetch_rows()   (1C COM; source='com')
+         — or —  OdataPriceSource.fetch_rows()  (1C OData/HTTP; source='odata')
       -> clean_rows
       -> apply_exclusions              (the cell's exclusion_list)
       -> build_xlsx(include_header=False, the cell's columns)
@@ -20,25 +21,28 @@ timeout / no network) stages the built file to the cell's pending slot as FAIL, 
 `retry_pending` re-sends it later (RESEND_OK on success). Secrets never reach a log or a
 stored message — every error string is flattened through `error_text` (redacts `Pwd=`/`Usr=`).
 
-The COM source and the HTTP uploader are injected (defaults: `ComPriceSource`,
-`upload_price`) so the whole runner is unit-tested with no live 1C/ZZap.
+The COM/OData sources and the HTTP uploader are injected (defaults: `ComPriceSource`,
+`OdataPriceSource`, `upload_price`); the source is chosen per cell by the connection's
+`source`, so the whole runner is unit-tested with no live 1C/ZZap.
 
 Threading: construct one Database (and thus one CellRunner) per worker thread — see
 the DAL module docstring (WAL + busy_timeout make the per-thread connections safe).
 """
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from engine.config import DEFAULT_ZZAP_API_URL, ComConfig, ZzapConfig
+from engine.config import DEFAULT_ZZAP_API_URL, ComConfig, OdataConfig, ZzapConfig
 from engine.delivery import Delivery
 from engine.query_builder import build_price_query
 from engine.sources.base import PriceSource
 from engine.sources.com import ComPriceSource
+from engine.sources.odata import OdataPriceSource
 from engine.transform import apply_exclusions, build_xlsx, clean_rows, parse_exclusions
 from engine.zzap_client import ZzapPermanentError, upload_price
 
@@ -56,7 +60,58 @@ RUN_ERROR = "ERROR"        # config/query/fetch/build error; nothing to retry
 RUN_RESEND_OK = "RESEND_OK"
 
 SourceFactory = Callable[[ComConfig], PriceSource]
+OdataSourceFactory = Callable[[OdataConfig], PriceSource]
 Uploader = Callable[..., dict]
+
+# Dry-run («Собрать файл без отправки»): the built file and the handoff JSON the child
+# process leaves for the GUI. Kept apart from the real price.xlsx so a preview can never
+# be confused with — or clobber — a build that is queued for delivery.
+PREVIEW_XLSX = "preview.xlsx"
+PREVIEW_JSON = "preview.json"
+
+
+def preview_json_path(work_dir: str | Path, cell_id: int) -> Path:
+    return Path(work_dir) / f"cell_{cell_id}" / PREVIEW_JSON
+
+
+@dataclass
+class PreviewResult:
+    """Outcome of a dry run: the file was built, NOTHING was sent to ZZap.
+
+    `zero_quantity`/`zero_price` are the safety signal: a wrong OData field name yields
+    rows that all carry 0 — `clean_rows` keeps them (it only drops rows without an
+    article), and the 0-row guard would NOT catch that before an upload wiped the
+    template. The GUI surfaces these counts prominently.
+    """
+    cell_id: int
+    ok: bool = False
+    rows: int = 0
+    zero_quantity: int = 0
+    zero_price: int = 0
+    file_path: str | None = None
+    sample: list[list] = field(default_factory=list)   # first rows, for eyeballing
+    message: str = ""
+
+    def to_dict(self) -> dict:
+        return {"cell_id": self.cell_id, "ok": self.ok, "rows": self.rows,
+                "zero_quantity": self.zero_quantity, "zero_price": self.zero_price,
+                "file_path": self.file_path, "sample": self.sample,
+                "message": self.message}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PreviewResult":
+        return cls(cell_id=int(data.get("cell_id", 0)), ok=bool(data.get("ok")),
+                   rows=int(data.get("rows", 0)),
+                   zero_quantity=int(data.get("zero_quantity", 0)),
+                   zero_price=int(data.get("zero_price", 0)),
+                   file_path=data.get("file_path"), sample=list(data.get("sample") or []),
+                   message=str(data.get("message") or ""))
+
+    def write(self, work_dir: str | Path) -> Path:
+        path = preview_json_path(work_dir, self.cell_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.to_dict(), ensure_ascii=False), encoding="utf-8")
+        return path
 
 
 @dataclass
@@ -74,12 +129,14 @@ class RunResult:
 class CellRunner:
     def __init__(self, db: Database, work_dir: str | Path, *,
                  source_factory: SourceFactory = ComPriceSource,
+                 odata_source_factory: OdataSourceFactory = OdataPriceSource,
                  uploader: Uploader = upload_price,
                  connection_manager: ConnectionManager | None = None,
                  network_check: Callable[[], bool] | None = None) -> None:
         self.db = db
         self.work_dir = Path(work_dir)
         self._source_factory = source_factory
+        self._odata_source_factory = odata_source_factory
         self._uploader = uploader
         self._cm = connection_manager or ConnectionManager()
         # Optional pre-POST reachability probe (Phase 4 offline recovery). When it
@@ -164,22 +221,65 @@ class CellRunner:
                          file_path=str(file_path), run_id=run_id, posted=True,
                          message="Досылка выполнена.")
 
+    # --- dry run (build the file, send NOTHING) ---------------------------
+    def build_preview(self, cell: Cell | int) -> PreviewResult:
+        """Build the cell's XLSX and stop — no upload, no run_history, no pending file.
+
+        The safe way to validate a connection (especially OData, where a wrong field name
+        silently yields zeros). Never raises: every failure comes back as ok=False.
+        """
+        # Resolve inside the guard too: an unknown id must come back as ok=False, not as
+        # an exception — the child process has to leave a readable result either way.
+        cell_id = cell.id if isinstance(cell, Cell) else int(cell)
+        try:
+            cell = self._resolve(cell)
+            cell_id = cell.id
+            conn = self._connection_for(cell)
+            rows = self._rows_for(cell, conn)
+            file_path = build_xlsx(rows, self._cell_dir(cell.id) / PREVIEW_XLSX,
+                                   include_header=cell.include_header,
+                                   columns=cell.columns)
+        except Exception as e:  # noqa: BLE001 - a preview must never crash the caller
+            msg = error_text(e)
+            log.warning("Cell %s preview failed: %s", cell_id, msg)
+            return PreviewResult(cell_id=cell_id or 0, ok=False, message=msg)
+
+        return PreviewResult(
+            cell_id=cell.id, ok=True, rows=len(rows),
+            zero_quantity=sum(1 for r in rows if not r.quantity),
+            zero_price=sum(1 for r in rows if not r.price),
+            file_path=str(file_path),
+            sample=[[r.producer, r.number, r.name, r.quantity, r.price] for r in rows[:10]],
+            message="Файл собран. В ZZap ничего не отправлено.")
+
     # --- build (everything up to and including the XLSX) ------------------
-    def _build(self, cell: Cell) -> tuple[Path, int]:
+    def _connection_for(self, cell: Cell):
         if cell.connection_id is None:
             raise ValueError("У ячейки не задано подключение 1С.")
         conn = self.db.get_connection(cell.connection_id)
         if conn is None:
             raise ValueError("Подключение 1С ячейки не найдено.")
+        return conn
+
+    def _rows_for(self, cell: Cell, conn) -> list:
+        """Fetch + clean + apply exclusions. Shared by the real run and the preview."""
+        password = self.db.get_connection_password(conn.id)
+        if conn.source == "odata":
+            # OData reads via the connection's own queries (base_url + entity sets);
+            # the cell's warehouses/price type are a COM-query concept and unused here.
+            source = self._odata_source_factory(self._cm.to_odata_config(conn, password))
+        else:
+            query = build_price_query(cell.warehouses, cell.price_type)
+            source = self._source_factory(self._cm.to_com_config(conn, password, query))
+        rows = clean_rows(source.fetch_rows())
+        return apply_exclusions(rows, self._exclusions(cell))
+
+    def _build(self, cell: Cell) -> tuple[Path, int]:
+        conn = self._connection_for(cell)
         if cell.cabinet_id is None or self.db.get_cabinet(cell.cabinet_id) is None:
             raise ValueError("У ячейки не выбран кабинет ZZap.")
 
-        query = build_price_query(cell.warehouses, cell.price_type)
-        password = self.db.get_connection_password(conn.id)
-        comcfg = self._cm.to_com_config(conn, password, query)
-
-        rows = clean_rows(self._source_factory(comcfg).fetch_rows())
-        rows = apply_exclusions(rows, self._exclusions(cell))
+        rows = self._rows_for(cell, conn)
         file_path = build_xlsx(rows, self._cell_dir(cell.id) / "price.xlsx",
                                include_header=cell.include_header, columns=cell.columns)
         return file_path, len(rows)

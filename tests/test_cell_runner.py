@@ -15,9 +15,10 @@ from app.db.models import Cabinet, Cell, Connection1C
 from app.services.cell_runner import (CellRunner, RUN_ERROR, RUN_FAIL, RUN_OK,
                                        RUN_RESEND_OK)
 from conftest import FakeCipher, make_rows
-from engine.config import ZzapConfig
+from engine.config import OdataConfig, ZzapConfig
 from engine.delivery import Delivery
 from engine.exclusions import read_exclusion_articles
+from engine.models import PriceRow
 from engine.zzap_client import ZzapPermanentError
 
 _DEFAULT_URL = "https://b52-api.zzap.pro/api/client/v1/price1c/upload"
@@ -203,6 +204,120 @@ def test_imported_excel_exclusions_filter_a_run(db, tmp_path):
     numbers = [row[1] for row in load_workbook(res.file_path).active.iter_rows(values_only=True)]
     assert numbers == ["B-2"]   # A-1 excluded; only B-2 remains
     assert res.rows_built == 1
+
+
+def test_odata_cell_uses_odata_source_and_skips_warehouse_query(db, tmp_path):
+    # An OData connection reads via its own queries — the cell needs no warehouse/
+    # price type, and the COM source must not be touched. The built OdataConfig must
+    # carry the connection's base_url + credentials.
+    conn = db.add_connection(
+        Connection1C(name="od", source="odata",
+                     odata_base_url="http://host/base/odata/standard.odata",
+                     odata_nomenclature_query="Catalog_Номенклатура?$select=Ref_Key",
+                     usr="webuser"),
+        password="webpass")
+    cab = db.add_cabinet(Cabinet(name="Cab"), api_key="zzap1_key")
+    cell_id = db.add_cell(Cell(
+        name="OData cell", enabled=True, connection_id=conn, cabinet_id=cab,
+        code_templ=42, price_type="", warehouses=[]))   # no warehouse/price at all
+
+    captured = {}
+
+    def odata_factory(cfg):
+        captured["cfg"] = cfg
+        return FakeSource(make_rows())
+
+    def com_must_not_run(cfg):
+        raise AssertionError("COM source used for an OData cell")
+
+    up = RecordingUploader()
+    runner = CellRunner(db, tmp_path / "work",
+                        source_factory=com_must_not_run,
+                        odata_source_factory=odata_factory, uploader=up)
+    res = runner.run_cell(cell_id)
+
+    assert res.status == RUN_OK
+    assert res.posted is True
+    assert res.rows_sent == 2                         # make_rows -> 2 after clean_rows
+    cfg = captured["cfg"]
+    assert isinstance(cfg, OdataConfig)
+    assert cfg.base_url == "http://host/base/odata/standard.odata"
+    assert cfg.username == "webuser" and cfg.password == "webpass"
+    assert up.calls[0]["cfg"].code_templ == 42
+
+
+# --- preview / dry run («Собрать файл без отправки») ------------------------
+def test_build_preview_builds_file_and_sends_nothing(db, tmp_path):
+    cell_id, *_ = _seed_cell(db)
+    up = RecordingUploader()
+    res = _runner(db, tmp_path, uploader=up).build_preview(cell_id)
+
+    assert res.ok is True
+    assert res.rows == 2                          # make_rows -> 2 after clean_rows
+    assert res.zero_quantity == 0 and res.zero_price == 0
+    assert res.file_path.endswith("preview.xlsx")
+    assert len(res.sample) == 2
+
+    # nothing was sent, nothing was journalled, nothing queued for delivery
+    assert up.calls == []
+    assert db.list_runs(cell_id=cell_id) == []
+    assert Delivery(tmp_path / "work" / f"cell_{cell_id}").get_pending() is None
+    # and the real upload artefact was NOT produced
+    assert not (tmp_path / "work" / f"cell_{cell_id}" / "price.xlsx").exists()
+
+
+def test_build_preview_counts_zero_quantities(db, tmp_path):
+    # The OData wrong-field-name signature: rows exist, every quantity is 0.
+    rows = [PriceRow("BrandA", "A-1", "Деталь 1", 0, 100.0),
+            PriceRow("BrandB", "B-2", "Деталь 2", 0, 50.5)]
+    cell_id, *_ = _seed_cell(db)
+    res = _runner(db, tmp_path, rows=rows).build_preview(cell_id)
+
+    assert res.ok is True
+    assert res.rows == 2
+    assert res.zero_quantity == 2                 # caller must refuse to upload this
+    assert res.zero_price == 0
+
+
+def test_build_preview_does_not_need_a_cabinet(db, tmp_path):
+    # A connection can be validated before the ZZap cabinet is even configured.
+    conn = db.add_connection(Connection1C(name="b", srvr="s", ref="r"), password="p")
+    cell_id = db.add_cell(Cell(name="c", connection_id=conn, cabinet_id=None,
+                               code_templ=0, price_type="ZZap", warehouses=["W"]))
+    res = _runner(db, tmp_path).build_preview(cell_id)
+
+    assert res.ok is True and res.rows == 2
+
+
+def test_build_preview_reports_error_without_raising(db, tmp_path):
+    cab = db.add_cabinet(Cabinet(name="Cab"), api_key="k")
+    cell_id = db.add_cell(Cell(name="no conn", cabinet_id=cab, code_templ=1,
+                               price_type="ZZap", warehouses=["W"]))
+    res = _runner(db, tmp_path).build_preview(cell_id)
+
+    assert res.ok is False
+    assert "подключение" in res.message.lower()
+    assert db.list_runs(cell_id=cell_id) == []    # a failed preview is not a run
+
+
+def test_build_preview_of_unknown_cell_returns_result_not_exception(db, tmp_path):
+    # The child process must always leave a readable result, even for a bad id.
+    res = _runner(db, tmp_path).build_preview(4242)
+    assert res.ok is False
+    assert res.cell_id == 4242
+    assert "не найдена" in res.message
+
+
+def test_build_preview_does_not_disturb_a_pending_file(db, tmp_path):
+    # A previous run failed and staged price.xlsx for retry; a preview must not eat it.
+    cell_id, *_ = _seed_cell(db)
+    failing = RecordingUploader(error=RuntimeError("ZZap вернул 500"))
+    _runner(db, tmp_path, uploader=failing).run_cell(cell_id)
+    delivery = Delivery(tmp_path / "work" / f"cell_{cell_id}")
+    assert delivery.get_pending() is not None
+
+    _runner(db, tmp_path).build_preview(cell_id)
+    assert delivery.get_pending() is not None     # still there, still retryable
 
 
 def test_run_all_enabled_runs_only_enabled_cells(db, tmp_path):

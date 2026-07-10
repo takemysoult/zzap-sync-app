@@ -15,10 +15,11 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from engine.config import ComConfig
+from engine.config import ComConfig, OdataConfig
 from engine.query_builder import (PRICE_TYPE_CATALOG, WAREHOUSE_CATALOG,
                                   build_catalog_names_query)
 from engine.sources.com import Com1C
+from engine.sources.odata import OdataPriceSource
 
 from ..db.models import Connection1C
 
@@ -34,6 +35,9 @@ class _Connection(Protocol):
 
 # factory(conn_string, progid) -> context manager yielding a _Connection
 ConnectionFactory = Callable[..., _Connection]
+
+# factory(OdataConfig) -> object with .probe()/.fetch_rows() (OdataPriceSource satisfies)
+OdataSourceFactory = Callable[[OdataConfig], OdataPriceSource]
 
 
 @dataclass
@@ -55,8 +59,10 @@ def _cs_quote(value: str) -> str:
 
 
 class ConnectionManager:
-    def __init__(self, connection_factory: ConnectionFactory = Com1C) -> None:
+    def __init__(self, connection_factory: ConnectionFactory = Com1C,
+                 odata_source_factory: OdataSourceFactory = OdataPriceSource) -> None:
         self._factory = connection_factory
+        self._odata_source_factory = odata_source_factory
 
     # --- connection string ------------------------------------------------
     @staticmethod
@@ -80,9 +86,29 @@ class ConnectionManager:
                          conn_string=self.build_conn_string(conn, password),
                          query=query)
 
+    def to_odata_config(self, conn: Connection1C, password: str | None) -> OdataConfig:
+        """Bridge to the engine: build an OdataConfig from a saved OData connection.
+
+        Credentials (usr/password) become HTTP Basic auth; the four query fields are
+        the 1C OData entity-set requests. Field-name mappings keep OdataConfig's
+        standard-configuration defaults.
+        """
+        return OdataConfig(
+            base_url=conn.odata_base_url.strip().rstrip("/"),
+            username=conn.usr,
+            password=password or "",
+            nomenclature_query=conn.odata_nomenclature_query.strip(),
+            prices_query=conn.odata_prices_query.strip(),
+            stock_query=conn.odata_stock_query.strip(),
+            producers_query=conn.odata_producers_query.strip(),
+            verify_ssl=conn.odata_verify_ssl,
+        )
+
     # --- validate ---------------------------------------------------------
     def test_connection(self, conn: Connection1C, password: str | None) -> ConnectionResult:
-        """Open a connection and run a trivial query. Never raises — returns a result."""
+        """Validate a connection (COM query or OData GET). Never raises — returns a result."""
+        if conn.source == "odata":
+            return self._test_odata(conn, password)
         try:
             cs = self.build_conn_string(conn, password)
         except ValueError as e:
@@ -95,6 +121,17 @@ class ConnectionManager:
             detail = error_text(e)
             log.warning("1C test_connection failed: %s", detail)
             return ConnectionResult(False, describe_1c_error(e), detail)
+
+    def _test_odata(self, conn: Connection1C, password: str | None) -> ConnectionResult:
+        if not conn.odata_base_url.strip():
+            return ConnectionResult(False, "Укажите адрес OData-сервиса (base_url).")
+        try:
+            self._odata_source_factory(self.to_odata_config(conn, password)).probe()
+            return ConnectionResult(True, "Соединение с OData установлено.")
+        except Exception as e:  # noqa: BLE001 - map every failure to a friendly message
+            detail = error_text(e)
+            log.warning("OData test_connection failed: %s", detail)
+            return ConnectionResult(False, describe_odata_error(e), detail)
 
     # --- discovery --------------------------------------------------------
     def discover(self, conn: Connection1C, password: str | None) -> Discovery:
@@ -185,3 +222,39 @@ def describe_1c_error(exc: BaseException) -> str:
            "соединение с сервером", "rpc"):
         return "Сервер 1С недоступен. Проверьте адрес сервера, порты и сеть."
     return "Не удалось подключиться к 1С. Подробности — в журнале."
+
+
+def describe_odata_error(exc: BaseException) -> str:
+    """Map an OData/HTTP failure to a friendly, actionable RU message.
+
+    Uses the HTTP status when the exception carries a response (requests.HTTPError),
+    otherwise falls back to substring heuristics over the flattened text.
+    """
+    status = None
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        status = getattr(resp, "status_code", None)
+    if status in (401, 403):
+        return ("OData отклонил авторизацию (%s): неверный логин/пароль или у "
+                "пользователя нет прав на OData." % status)
+    if status == 404:
+        return ("OData вернул 404: неверный адрес сервиса (base_url) или имя "
+                "публикации базы. Проверьте адрес.")
+    if isinstance(status, int) and status >= 500:
+        return "Сервер OData вернул ошибку (%s). Повторите позже." % status
+
+    low = error_text(exc).lower()
+    if any(s in low for s in ("certificate", "ssl", "self signed", "self-signed",
+                              "cert_", "сертификат")):
+        return ("Сертификат сервера не прошёл проверку. Для самоподписанного "
+                "сертификата снимите галочку «Проверять SSL-сертификат» в настройках "
+                "подключения OData.")
+    if any(s in low for s in ("timeout", "timed out", "таймаут")):
+        return ("OData не ответил вовремя (таймаут). Проверьте, что VPN (WireGuard) "
+                "поднят, и адрес доступен.")
+    if any(s in low for s in ("connection", "name or service", "getaddrinfo",
+                              "не удалось разрешить", "соединени", "refused",
+                              "max retries", "unreachable")):
+        return ("Сервис OData недоступен. Проверьте, что VPN (WireGuard) подключён, и "
+                "верны адрес (base_url) и порт.")
+    return "Не удалось подключиться к OData. Подробности — в журнале."

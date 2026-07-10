@@ -16,7 +16,7 @@ def db(tmp_path):
 
 def test_schema_version_applied(db):
     version = db._conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 1
+    assert version == 2
 
 
 def test_cabinet_crud_secret_encrypted_at_rest(db):
@@ -48,6 +48,80 @@ def test_connection_password_preserved_on_partial_update(db):
     db.update_connection(conn)
     assert db.get_connection(cid).usr == "Admin"
     assert db.get_connection_password(cid) == "p@ss"
+
+
+def test_odata_connection_round_trip(db):
+    cid = db.add_connection(
+        Connection1C(name="od", source="odata",
+                     odata_base_url="http://host/base/odata/standard.odata",
+                     odata_nomenclature_query="Catalog_Номенклатура?$select=Ref_Key",
+                     odata_prices_query="InformationRegister_Цены_SliceLast",
+                     odata_stock_query="AccumulationRegister_Товары_Balance",
+                     odata_producers_query="Catalog_Производители",
+                     usr="webuser", is_default=True),
+        password="webpass")
+    conn = db.get_connection(cid)
+    assert conn.source == "odata"
+    assert conn.odata_base_url.endswith("standard.odata")
+    assert conn.odata_nomenclature_query.startswith("Catalog_Номенклатура")
+    assert conn.odata_prices_query and conn.odata_stock_query and conn.odata_producers_query
+    assert conn.usr == "webuser"
+    assert conn.odata_verify_ssl is True          # secure default
+    assert db.get_connection_password(cid) == "webpass"
+
+    # editing OData fields (incl. disabling TLS check) without touching the password
+    conn.odata_base_url = "http://host2/base/odata/standard.odata"
+    conn.odata_verify_ssl = False
+    db.update_connection(conn)
+    reread = db.get_connection(cid)
+    assert reread.odata_base_url.startswith("http://host2")
+    assert reread.odata_verify_ssl is False
+    assert db.get_connection_password(cid) == "webpass"
+
+
+def test_migrate_v1_db_adds_odata_columns_and_keeps_data(tmp_path):
+    # A database created by the pre-OData app (schema v1): build it by hand, then let
+    # Database() upgrade it. The upgrade must be additive — the existing connection and
+    # its (encrypted) password survive, and OData columns appear defaulted.
+    import sqlite3
+
+    path = tmp_path / "legacy.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(
+        """
+        CREATE TABLE connection_1c (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'server' CHECK (kind IN ('server','file')),
+            srvr TEXT NOT NULL DEFAULT '', ref TEXT NOT NULL DEFAULT '',
+            file_path TEXT NOT NULL DEFAULT '',
+            progid TEXT NOT NULL DEFAULT 'V83.COMConnector',
+            usr TEXT NOT NULL DEFAULT '', password_enc BLOB,
+            is_default INTEGER NOT NULL DEFAULT 0
+        );
+        """)
+    raw.execute(
+        "INSERT INTO connection_1c (name, kind, srvr, ref, usr, password_enc, is_default)"
+        " VALUES ('legacy','server','Serv1C','ut2025','Натали', ?, 1)",
+        (FakeCipher().encrypt("p@ss"),))
+    raw.execute("PRAGMA user_version = 1")
+    raw.commit()
+    raw.close()
+
+    database = Database(path, cipher=FakeCipher())
+    try:
+        assert database._conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        cols = {r["name"] for r in
+                database._conn.execute("PRAGMA table_info(connection_1c)")}
+        assert {"source", "odata_base_url", "odata_nomenclature_query",
+                "odata_prices_query", "odata_stock_query",
+                "odata_producers_query"} <= cols
+        conn = database.get_default_connection()
+        assert conn is not None and conn.name == "legacy"
+        assert conn.source == "com"                      # defaulted for old rows
+        assert database.get_connection_password(conn.id) == "p@ss"
+    finally:
+        database.close()
 
 
 def test_cell_defaults_and_json_round_trip(db):

@@ -136,7 +136,16 @@ class CellEditor(QDialog):
         load_row.addWidget(self.btn_discover)
         load_row.addWidget(self.lbl_discover, 1)
         wh_l.addLayout(load_row)
+        self.lbl_odata_note = QLabel(
+            "Подключение OData: склады и вид цены задаются в запросах подключения "
+            "($filter), здесь выбирать их не нужно.")
+        self.lbl_odata_note.setWordWrap(True)
+        self.lbl_odata_note.setProperty("role", "hint")
+        self.lbl_odata_note.setVisible(False)
+        wh_l.addWidget(self.lbl_odata_note)
+        self.wh_box = wh_box
         root.addWidget(wh_box)
+        self.cmb_conn.currentIndexChanged.connect(self._sync_source_ui)
 
         # Exclusions
         exc_box = QGroupBox("Исключения (артикулы, которые не выгружать)")
@@ -199,6 +208,23 @@ class CellEditor(QDialog):
         self._populate_price_types(price_types, current=cell.price_type)
         self._populate_warehouses(warehouses, checked=cell.warehouses)
         self._refresh_exclusions_label()
+        self._sync_source_ui()
+
+    def _selected_conn_source(self) -> str:
+        """'com' | 'odata' for the currently selected connection (default 'com')."""
+        conn_id = self.cmb_conn.currentData()
+        if conn_id is None:
+            return "com"
+        conn = self.ctx.db.get_connection(conn_id)
+        return conn.source if conn else "com"
+
+    def _sync_source_ui(self) -> None:
+        """OData connections read via their own queries — hide the склад/вид-цены picker."""
+        odata = self._selected_conn_source() == "odata"
+        self.cmb_price.setEnabled(not odata)
+        self.btn_discover.setEnabled(not odata)
+        self.lst_wh.setEnabled(not odata)
+        self.lbl_odata_note.setVisible(odata)
 
     @staticmethod
     def _select_data(combo: QComboBox, value) -> None:
@@ -254,6 +280,12 @@ class CellEditor(QDialog):
             QMessageBox.warning(self, "Нет подключения",
                                 "Сначала выберите подключение 1С (и сохраните его на "
                                 "вкладке «Подключение 1С»).")
+            return
+        if self._selected_conn_source() == "odata":
+            QMessageBox.information(
+                self, "OData",
+                "Для подключения OData склады и вид цены задаются в запросах "
+                "подключения — выбирать их здесь не нужно.")
             return
         conn = self.ctx.db.get_connection(conn_id)
         if conn is None:
@@ -355,13 +387,16 @@ class CellEditor(QDialog):
         if not self.ed_name.text().strip():
             QMessageBox.warning(self, "Проверьте поля", "Укажите название ячейки.")
             return
-        if not self._checked_warehouses():
-            QMessageBox.warning(self, "Проверьте поля",
-                                "Выберите хотя бы один склад.")
-            return
-        if not self.cmb_price.currentText().strip():
-            QMessageBox.warning(self, "Проверьте поля", "Укажите вид цены.")
-            return
+        # Склад/вид цены обязательны только для COM-подключения; для OData фильтрация
+        # задаётся в запросах самого подключения.
+        if self._selected_conn_source() != "odata":
+            if not self._checked_warehouses():
+                QMessageBox.warning(self, "Проверьте поля",
+                                    "Выберите хотя бы один склад.")
+                return
+            if not self.cmb_price.currentText().strip():
+                QMessageBox.warning(self, "Проверьте поля", "Укажите вид цены.")
+                return
         self.accept()
 
     def result_cell(self) -> Cell:

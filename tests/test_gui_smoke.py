@@ -24,6 +24,9 @@ from app.db.models import Cabinet, Cell, Connection1C  # noqa: E402
 from app.gui.context import AppContext  # noqa: E402
 from app.gui.main_window import MainWindow  # noqa: E402
 from app.gui.screens.cell_editor import CellEditor  # noqa: E402
+from app.gui.screens.cells import CellsScreen, _preview_text  # noqa: E402
+from app.gui.screens.connection import ConnectionScreen  # noqa: E402
+from app.services.cell_runner import PreviewResult  # noqa: E402
 from app.gui.tray import TrayController  # noqa: E402
 from app.gui.workers import AsyncRunner  # noqa: E402
 from app.services.scheduler import (KIND_SCHEDULED, RunSummary,  # noqa: E402
@@ -102,6 +105,86 @@ def test_new_cell_editor_defaults_to_disabled(qapp, ctx):
     _seed(ctx)
     editor = CellEditor(ctx, AsyncRunner(), None)
     assert editor.cb_enabled.isChecked() is False
+
+
+def test_connection_screen_odata_round_trip(qapp, ctx):
+    screen = ConnectionScreen(ctx, AsyncRunner())
+    screen.rb_odata.setChecked(True)
+    screen.ed_name.setText("OData база")
+    screen.ed_base.setText("http://host/base/odata/standard.odata")
+    screen.ed_q_nom.setPlainText("Catalog_Номенклатура?$select=Ref_Key")
+    screen.ed_usr.setText("webuser")
+    screen.ed_pwd.setText("webpass")
+    # Selecting OData shows its box and hides the COM box (visibility relative to parent,
+    # which works without the top-level being shown).
+    assert screen.odata_box.isVisibleTo(screen) is True
+    assert screen.com_box.isVisibleTo(screen) is False
+    screen._on_save()
+
+    saved = ctx.db.get_default_connection()
+    assert saved is not None
+    assert saved.source == "odata"
+    assert saved.odata_base_url.endswith("standard.odata")
+    assert saved.odata_nomenclature_query.startswith("Catalog_Номенклатура")
+    assert ctx.db.get_connection_password(saved.id) == "webpass"
+
+    # reload re-selects OData and refills the fields (password stays masked)
+    screen.reload()
+    assert screen.rb_odata.isChecked()
+    assert screen.ed_base.text().endswith("standard.odata")
+
+
+def test_cell_editor_allows_empty_warehouse_for_odata(qapp, ctx):
+    conn_id = ctx.db.add_connection(
+        Connection1C(name="OD", source="odata",
+                     odata_base_url="http://host/odata",
+                     odata_nomenclature_query="Catalog_Номенклатура", usr="u"),
+        "p")
+    cab_id = ctx.db.add_cabinet(Cabinet(name="Каб1"), "zzap1_key")
+    cell = Cell(name="OData cell", enabled=True, connection_id=conn_id,
+                cabinet_id=cab_id, code_templ=42, price_type="", warehouses=[])
+    cell.id = ctx.db.add_cell(cell)
+    editor = CellEditor(ctx, AsyncRunner(), ctx.db.get_cell(cell.id))
+    # OData selected -> warehouse/price controls disabled, note shown
+    assert editor.btn_discover.isEnabled() is False
+    assert editor.lst_wh.isEnabled() is False
+    # _accept must pass despite no warehouse / no price type
+    from PySide6.QtWidgets import QDialog
+    editor._accept()
+    assert editor.result() == QDialog.DialogCode.Accepted
+
+
+def test_cells_screen_has_a_send_nothing_preview_button(qapp, ctx):
+    _seed(ctx)
+    screen = CellsScreen(ctx, AsyncRunner())
+    assert screen.btn_preview.isEnabled()
+    assert "без отправки" in screen.btn_preview.text()
+
+
+def test_preview_text_flags_all_zero_quantities_as_unsendable():
+    result = PreviewResult(cell_id=1, ok=True, rows=3, zero_quantity=3, zero_price=0,
+                           file_path="p.xlsx")
+    text, suspicious = _preview_text(result)
+    assert suspicious is True
+    assert "НЕЛЬЗЯ" in text                      # explicit "do not upload this"
+    assert "количество" in text
+
+
+def test_preview_text_flags_all_zero_prices():
+    result = PreviewResult(cell_id=1, ok=True, rows=2, zero_quantity=0, zero_price=2,
+                           file_path="p.xlsx")
+    text, suspicious = _preview_text(result)
+    assert suspicious is True
+    assert "цена" in text
+
+
+def test_preview_text_is_calm_when_data_looks_sane():
+    result = PreviewResult(cell_id=1, ok=True, rows=100, zero_quantity=0, zero_price=3,
+                           file_path="p.xlsx", sample=[["B", "A-1", "Д", 5, 10.0]])
+    text, suspicious = _preview_text(result)
+    assert suspicious is False
+    assert "НЕЛЬЗЯ" not in text
+    assert "В ZZap ничего не отправлено." in text
 
 
 def test_duplicate_banner_lights_up(qapp, ctx):

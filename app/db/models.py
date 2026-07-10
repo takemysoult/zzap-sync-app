@@ -13,14 +13,23 @@ from dataclasses import dataclass, field
 class Connection1C:
     id: int | None = None
     name: str = ""
-    kind: str = "server"          # 'server' | 'file'
+    kind: str = "server"          # 'server' | 'file' (COM base type; unused for OData)
     srvr: str = ""
     ref: str = ""
     file_path: str = ""
     progid: str = "V83.COMConnector"
-    usr: str = ""
+    usr: str = ""                 # COM: 1C user; OData: HTTP Basic user
     has_password: bool = False    # whether password_enc is set (secret itself not exposed)
     is_default: bool = False
+    source: str = "com"           # 'com' (external COM connection) | 'odata' (HTTP OData)
+    # OData source parameters (used only when source == 'odata'). The queries are the
+    # 1C OData entity-set requests (paths + $select/$filter); credentials reuse usr/password.
+    odata_base_url: str = ""
+    odata_nomenclature_query: str = ""
+    odata_prices_query: str = ""
+    odata_stock_query: str = ""
+    odata_producers_query: str = ""
+    odata_verify_ssl: bool = True   # False => skip TLS verify (self-signed cert over VPN)
 
 
 @dataclass

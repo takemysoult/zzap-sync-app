@@ -1,7 +1,10 @@
 """ConnectionManager unit tests with a fake COM connection (no live 1C)."""
+import requests
+
 from app.db.models import Connection1C
 from app.services.connection import (ConnectionManager, describe_1c_error,
-                                     error_text)
+                                     describe_odata_error, error_text)
+from engine.config import OdataConfig
 
 
 class FakeCom1C:
@@ -108,6 +111,100 @@ def test_to_com_config_bridges_to_engine():
     assert cfg.progid == "V83.COMConnector"
     assert 'Srvr="Serv1C"' in cfg.conn_string
     assert cfg.query == "ВЫБРАТЬ 1"
+
+
+class FakeOdataSource:
+    """Mimics engine.sources.odata.OdataPriceSource for probe()-based tests."""
+    last: "FakeOdataSource | None" = None
+
+    def __init__(self, cfg: OdataConfig, error: Exception | None = None):
+        self.cfg = cfg
+        self.error = error
+        FakeOdataSource.last = self
+
+    def probe(self) -> None:
+        if self.error:
+            raise self.error
+
+
+def _odata_conn(**over):
+    conn = Connection1C(
+        name="od", source="odata",
+        odata_base_url="http://host/base/odata/standard.odata",
+        odata_nomenclature_query="Catalog_Номенклатура?$select=Ref_Key,Артикул",
+        odata_prices_query="InformationRegister_Цены_SliceLast",
+        usr="webuser")
+    for k, v in over.items():
+        setattr(conn, k, v)
+    return conn
+
+
+def _http_error(status: int) -> requests.HTTPError:
+    resp = requests.Response()
+    resp.status_code = status
+    return requests.HTTPError(f"{status}", response=resp)
+
+
+def test_to_odata_config_maps_fields_and_credentials():
+    cfg = ConnectionManager().to_odata_config(_odata_conn(), "secret")
+    assert isinstance(cfg, OdataConfig)
+    assert cfg.base_url == "http://host/base/odata/standard.odata"
+    assert cfg.username == "webuser" and cfg.password == "secret"
+    assert cfg.nomenclature_query.startswith("Catalog_Номенклатура")
+    assert cfg.prices_query.startswith("InformationRegister_Цены")
+    assert cfg.verify_ssl is True                       # default
+
+
+def test_to_odata_config_passes_verify_ssl_flag():
+    cfg = ConnectionManager().to_odata_config(
+        _odata_conn(odata_verify_ssl=False), "p")
+    assert cfg.verify_ssl is False
+
+
+def test_to_odata_config_strips_trailing_slash():
+    cfg = ConnectionManager().to_odata_config(
+        _odata_conn(odata_base_url="http://host/base/odata/standard.odata/"), "p")
+    assert cfg.base_url == "http://host/base/odata/standard.odata"
+
+
+def test_test_connection_odata_success_passes_password():
+    mgr = ConnectionManager(odata_source_factory=lambda cfg: FakeOdataSource(cfg))
+    res = mgr.test_connection(_odata_conn(), "p")
+    assert res.ok is True
+    assert "OData" in res.message
+    assert FakeOdataSource.last.cfg.password == "p"
+
+
+def test_test_connection_odata_requires_base_url():
+    res = ConnectionManager().test_connection(_odata_conn(odata_base_url=""), "p")
+    assert res.ok is False
+    assert "base_url" in res.message
+
+
+def test_test_connection_odata_maps_auth_error():
+    mgr = ConnectionManager(
+        odata_source_factory=lambda cfg: FakeOdataSource(cfg, error=_http_error(401)))
+    res = mgr.test_connection(_odata_conn(), "p")
+    assert res.ok is False
+    assert "401" in res.message
+    assert res.detail   # raw detail captured for logs
+
+
+def test_describe_odata_error_404_and_timeout_and_conn():
+    assert "404" in describe_odata_error(_http_error(404))
+    assert "таймаут" in describe_odata_error(
+        requests.exceptions.Timeout("timed out")).lower()
+    # connection failure hints at the VPN (WireGuard) tunnel
+    conn_msg = describe_odata_error(
+        requests.exceptions.ConnectionError("Max retries exceeded")).lower()
+    assert "недоступ" in conn_msg and "wireguard" in conn_msg
+
+
+def test_describe_odata_error_ssl_suggests_unchecking_verify():
+    err = requests.exceptions.SSLError("certificate verify failed: self signed certificate")
+    msg = describe_odata_error(err)
+    assert "сертификат" in msg.lower()
+    assert "SSL" in msg
 
 
 def test_describe_1c_error_typelib():

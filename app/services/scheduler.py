@@ -64,21 +64,32 @@ DEFAULT_RUN_TIMEOUT_SECONDS = float(os.environ.get("ZZAP_RUN_TIMEOUT_SECONDS", "
 _CREATE_NO_WINDOW = 0x08000000  # не мигать консолью в dev-режиме (python.exe)
 
 
+def child_base_command() -> list[str]:
+    """База команды дочернего процесса (frozen .exe или dev-модуль).
+
+    Общая для боевой выгрузки и для предпросмотра («собрать файл без отправки») —
+    оба обязаны идти в дочернем процессе, чтобы GUI не загружал среду 1С COM.
+    """
+    if getattr(sys, "frozen", False):
+        return [sys.executable]                      # ZZapSync.exe --run-all
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")               # без консольного окна, если есть
+    return [str(pyw if pyw.exists() else exe), "-m", "app.gui"]
+
+
 def build_run_command(cell_id: int | None) -> list[str]:
     """Команда запуска ОДНОЙ выгрузки в дочернем процессе (frozen .exe или dev-модуль)."""
-    if getattr(sys, "frozen", False):
-        base = [sys.executable]                      # ZZapSync.exe --run-all
-    else:
-        exe = Path(sys.executable)
-        pyw = exe.with_name("pythonw.exe")           # без консольного окна, если есть
-        base = [str(pyw if pyw.exists() else exe), "-m", "app.gui"]
-    return base + (["--run-cell", str(cell_id)] if cell_id is not None else ["--run-all"])
+    return child_base_command() + (
+        ["--run-cell", str(cell_id)] if cell_id is not None else ["--run-all"])
 
 
-def _default_launcher(cmd: list[str], timeout: float) -> None:
+def run_child_process(cmd: list[str], timeout: float) -> None:
     """Выполнить дочерний процесс до конца; при таймауте — убить (бросит TimeoutExpired)."""
     creationflags = _CREATE_NO_WINDOW if os.name == "nt" else 0
     subprocess.run(cmd, timeout=timeout, creationflags=creationflags)
+
+
+_default_launcher = run_child_process   # имя, на которое ссылается SchedulerService
 
 # RunSummary.kind values.
 KIND_SCHEDULED = "scheduled"

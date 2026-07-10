@@ -63,7 +63,12 @@ class OutputConfig:
 
 @dataclass
 class OdataConfig:
-    """OData source config (future 2nd base / alt path; not used in MVP)."""
+    """OData source config — read the price list from 1C over HTTP (standard OData).
+
+    An alternative to COM (`ComConfig`): no COM connector / bitness / child-process
+    needed. Selected per connection in the app (Connection1C.source == 'odata'). The
+    four query strings are the 1C OData entity-set requests (paths + $select/$filter);
+    warehouse/price filtering lives in those queries, not in the cell."""
     base_url: str
     username: str
     password: str
@@ -81,3 +86,6 @@ class OdataConfig:
     stock_qty_field: str = "КоличествоBalance"
     producer_key_field: str = "Ref_Key"
     producer_name_field: str = "Description"
+    # TLS verification. Set False for a self-signed 1C publication reached over a VPN
+    # (WireGuard) by IP — otherwise requests rejects the certificate. Default True.
+    verify_ssl: bool = True

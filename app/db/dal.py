@@ -27,7 +27,21 @@ from ..security.secrets import Cipher, DpapiCipher
 from .models import Cabinet, Cell, Connection1C, ExclusionList, RunHistory
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Columns added to connection_1c in schema v2 (OData source support). Applied to
+# existing v1 databases by ALTER TABLE ADD COLUMN — purely additive, so no data is
+# touched and no table rebuild is needed. Kept in sync with schema.sql by
+# test_dal (fresh schema and migrated schema must expose the same columns).
+_V2_CONNECTION_COLUMNS = (
+    ("source", "TEXT NOT NULL DEFAULT 'com'"),
+    ("odata_base_url", "TEXT NOT NULL DEFAULT ''"),
+    ("odata_nomenclature_query", "TEXT NOT NULL DEFAULT ''"),
+    ("odata_prices_query", "TEXT NOT NULL DEFAULT ''"),
+    ("odata_stock_query", "TEXT NOT NULL DEFAULT ''"),
+    ("odata_producers_query", "TEXT NOT NULL DEFAULT ''"),
+    ("odata_verify_ssl", "INTEGER NOT NULL DEFAULT 1"),
+)
 
 _DEFAULT_API_URL = "https://b52-api.zzap.pro/api/client/v1/price1c/upload"
 _DEFAULT_COLUMNS = {"producer": 1, "number": 2, "name": 3, "quantity": 4, "price": 5}
@@ -55,10 +69,26 @@ class Database:
     def _migrate(self) -> None:
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
+            # Fresh database — apply the full current schema in one shot.
             self._conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._conn.commit()
-        # Future schema bumps: elif version < SCHEMA_VERSION: apply incremental steps.
+            return
+        # Incremental upgrades for databases created by an older app version.
+        if version < 2:
+            self._upgrade_to_v2()
+        # Future schema bumps: if version < 3: self._upgrade_to_v3(); ...
+
+    def _upgrade_to_v2(self) -> None:
+        """v1 -> v2: add OData source columns to connection_1c (additive, data-safe)."""
+        existing = {r["name"] for r in
+                    self._conn.execute("PRAGMA table_info(connection_1c)")}
+        for name, decl in _V2_CONNECTION_COLUMNS:
+            if name not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE connection_1c ADD COLUMN {name} {decl}")
+        self._conn.execute("PRAGMA user_version = 2")
+        self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()
@@ -86,10 +116,15 @@ class Database:
     def add_connection(self, conn: Connection1C, password: str | None = None) -> int:
         cur = self._conn.execute(
             """INSERT INTO connection_1c
-               (name, kind, srvr, ref, file_path, progid, usr, password_enc, is_default)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+               (name, kind, srvr, ref, file_path, progid, usr, password_enc, is_default,
+                source, odata_base_url, odata_nomenclature_query, odata_prices_query,
+                odata_stock_query, odata_producers_query, odata_verify_ssl)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (conn.name, conn.kind, conn.srvr, conn.ref, conn.file_path, conn.progid,
-             conn.usr, self._enc(password), int(conn.is_default)),
+             conn.usr, self._enc(password), int(conn.is_default),
+             conn.source, conn.odata_base_url, conn.odata_nomenclature_query,
+             conn.odata_prices_query, conn.odata_stock_query, conn.odata_producers_query,
+             int(conn.odata_verify_ssl)),
         )
         self._conn.commit()
         new_id = int(cur.lastrowid)
@@ -119,19 +154,25 @@ class Database:
         (so callers can save other fields without clearing the stored secret)."""
         if conn.id is None:
             raise ValueError("update_connection requires conn.id")
+        odata = (conn.source, conn.odata_base_url, conn.odata_nomenclature_query,
+                 conn.odata_prices_query, conn.odata_stock_query,
+                 conn.odata_producers_query, int(conn.odata_verify_ssl))
+        odata_set = ("source=?, odata_base_url=?, odata_nomenclature_query=?, "
+                     "odata_prices_query=?, odata_stock_query=?, odata_producers_query=?, "
+                     "odata_verify_ssl=?")
         if update_password:
             self._conn.execute(
-                """UPDATE connection_1c SET name=?, kind=?, srvr=?, ref=?, file_path=?,
-                   progid=?, usr=?, password_enc=?, is_default=? WHERE id=?""",
+                f"""UPDATE connection_1c SET name=?, kind=?, srvr=?, ref=?, file_path=?,
+                   progid=?, usr=?, password_enc=?, is_default=?, {odata_set} WHERE id=?""",
                 (conn.name, conn.kind, conn.srvr, conn.ref, conn.file_path, conn.progid,
-                 conn.usr, self._enc(password), int(conn.is_default), conn.id),
+                 conn.usr, self._enc(password), int(conn.is_default), *odata, conn.id),
             )
         else:
             self._conn.execute(
-                """UPDATE connection_1c SET name=?, kind=?, srvr=?, ref=?, file_path=?,
-                   progid=?, usr=?, is_default=? WHERE id=?""",
+                f"""UPDATE connection_1c SET name=?, kind=?, srvr=?, ref=?, file_path=?,
+                   progid=?, usr=?, is_default=?, {odata_set} WHERE id=?""",
                 (conn.name, conn.kind, conn.srvr, conn.ref, conn.file_path, conn.progid,
-                 conn.usr, int(conn.is_default), conn.id),
+                 conn.usr, int(conn.is_default), *odata, conn.id),
             )
         self._conn.commit()
         if conn.is_default:
@@ -418,6 +459,12 @@ def _row_to_connection(row: sqlite3.Row) -> Connection1C:
         ref=row["ref"], file_path=row["file_path"], progid=row["progid"],
         usr=row["usr"], has_password=row["password_enc"] is not None,
         is_default=bool(row["is_default"]),
+        source=row["source"], odata_base_url=row["odata_base_url"],
+        odata_nomenclature_query=row["odata_nomenclature_query"],
+        odata_prices_query=row["odata_prices_query"],
+        odata_stock_query=row["odata_stock_query"],
+        odata_producers_query=row["odata_producers_query"],
+        odata_verify_ssl=bool(row["odata_verify_ssl"]),
     )
 
 

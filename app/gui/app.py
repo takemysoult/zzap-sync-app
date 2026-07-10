@@ -37,25 +37,38 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                         help="разовая выгрузка всех включённых ячеек и выход (дочерний процесс)")
     parser.add_argument("--run-cell", type=int, default=None, metavar="ID",
                         help="разовая выгрузка одной ячейки по id и выход (дочерний процесс)")
+    parser.add_argument("--preview-cell", type=int, default=None, metavar="ID",
+                        help="собрать файл ячейки БЕЗ отправки в ZZap и выход "
+                             "(дочерний процесс)")
     # Ignore unknown args (e.g. Qt's own) so autostart command quirks don't crash.
     args, _unknown = parser.parse_known_args(argv)
     return args
 
 
 def _run_headless(args: argparse.Namespace) -> int:
-    """Дочерний режим: выполнить ОДНУ выгрузку и выйти (без Qt/трея/одиночного экземпляра).
+    """Дочерний режим: одна выгрузка ИЛИ одна проверка — и выход (без Qt/трея/одиночки).
 
     Планировщик запускает выгрузку именно так — в коротком дочернем процессе: после выхода
     ОС освобождает среду 1С COM (~400 МБ) и все хэндлы, а нативное зависание COM не может
     заморозить GUI (родитель убивает зависший процесс по таймауту). Результаты пишутся в
     run_history — родитель их оттуда и читает.
+
+    `--preview-cell` собирает файл и НИЧЕГО не отправляет; его результат кладётся рядом с
+    файлом в preview.json (run_history не трогается — проверка не является выгрузкой).
     """
     from ..services.cell_runner import CellRunner
     paths.ensure_dirs()
     ctx = AppContext()
     try:
-        ctx.db.finalize_orphan_runs()
         runner = CellRunner(ctx.db, ctx.work_dir, network_check=is_online)
+        if args.preview_cell is not None:
+            # Проверка: собрать файл и НИЧЕГО не отправлять. Не трогаем run_history
+            # (в т.ч. finalize_orphan_runs) — проверка не является выгрузкой.
+            log.info("Дочерний процесс: проверка ячейки #%s (без отправки).",
+                     args.preview_cell)
+            runner.build_preview(args.preview_cell).write(ctx.work_dir)
+            return 0
+        ctx.db.finalize_orphan_runs()
         if args.run_cell is not None:
             log.info("Дочерний процесс: выгрузка ячейки #%s.", args.run_cell)
             runner.run_cell(args.run_cell)
@@ -83,10 +96,11 @@ def main(argv: list[str] | None = None) -> int:
         from ..watchdog import run_watchdog
         return run_watchdog()
 
-    # Headless run (child process launched by the scheduler): one sync, then exit.
-    # Handled before QApplication / single-instance so it never opens a window and is
-    # not blocked by the guard (the running GUI is the primary instance).
-    if args.run_all or args.run_cell is not None:
+    # Headless run (child process launched by the scheduler): one sync — or one
+    # send-nothing preview — then exit. Handled before QApplication / single-instance so
+    # it never opens a window and is not blocked by the guard (the running GUI is the
+    # primary instance).
+    if args.run_all or args.run_cell is not None or args.preview_cell is not None:
         return _run_headless(args)
 
     # Диагностика крашей. Страховку старта взводим САМОЙ ПЕРВОЙ — до тяжёлых импортов

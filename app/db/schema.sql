@@ -2,7 +2,12 @@
 -- Applied by app.db.dal.Database when PRAGMA user_version = 0, then user_version := 1.
 -- Data model per ROADMAP.md §4. Secrets are stored as DPAPI BLOBs, never plaintext.
 
--- A 1C connection target (server base or file base) + external-connection credentials.
+-- A 1C connection target + credentials. `source` picks the read path:
+--   'com'   — external COM connection (kind = 'server'|'file'; srvr/ref/file_path/progid).
+--   'odata' — 1C standard OData over HTTP (odata_base_url + the odata_*_query fields);
+--             usr/password_enc are reused as the HTTP Basic credentials.
+-- The COM fields are ignored when source='odata' and vice-versa. `kind` keeps its
+-- 'server'|'file' CHECK; an OData row leaves it at the 'server' default (unused).
 CREATE TABLE IF NOT EXISTS connection_1c (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT    NOT NULL DEFAULT '',
@@ -11,9 +16,16 @@ CREATE TABLE IF NOT EXISTS connection_1c (
     ref          TEXT    NOT NULL DEFAULT '',   -- e.g. ut2025  (server base)
     file_path    TEXT    NOT NULL DEFAULT '',   -- file base path (kind='file')
     progid       TEXT    NOT NULL DEFAULT 'V83.COMConnector',
-    usr          TEXT    NOT NULL DEFAULT '',   -- 1C user (needs External-connection right)
+    usr          TEXT    NOT NULL DEFAULT '',   -- 1C user (COM: External-connection right; OData: HTTP user)
     password_enc BLOB,                          -- DPAPI-encrypted; NULL if unset
-    is_default   INTEGER NOT NULL DEFAULT 0
+    is_default   INTEGER NOT NULL DEFAULT 0,
+    source       TEXT    NOT NULL DEFAULT 'com',    -- 'com' | 'odata'
+    odata_base_url           TEXT NOT NULL DEFAULT '',  -- e.g. http://host/base/odata/standard.odata
+    odata_nomenclature_query TEXT NOT NULL DEFAULT '',  -- entity set + $select/$filter for goods
+    odata_prices_query       TEXT NOT NULL DEFAULT '',  -- optional: prices slice
+    odata_stock_query        TEXT NOT NULL DEFAULT '',  -- optional: stock balances
+    odata_producers_query    TEXT NOT NULL DEFAULT '',  -- optional: producer names
+    odata_verify_ssl         INTEGER NOT NULL DEFAULT 1  -- 0 = skip TLS cert check (self-signed over VPN)
 );
 
 -- A ZZap cabinet/account = one API key. Cells reference a cabinet.
