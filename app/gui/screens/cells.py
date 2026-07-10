@@ -10,8 +10,8 @@ thread-affine) and runs CellRunner there, off the UI thread.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView,
+from PySide2.QtCore import Qt
+from PySide2.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView,
                                QLabel, QMessageBox, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -26,7 +26,7 @@ from ..context import AppContext
 from ..workers import AsyncRunner
 from .cell_editor import CellEditor
 
-_USER_ROLE = int(Qt.ItemDataRole.UserRole)
+_USER_ROLE = int(Qt.UserRole)
 
 
 class CellsScreen(QWidget):
@@ -52,12 +52,12 @@ class CellsScreen(QWidget):
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
             ["Название", "Вкл.", "Кабинет", "code_templ", "Вид цены", "Склады"])
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(
-            5, QHeaderView.ResizeMode.Stretch)
+            5, QHeaderView.Stretch)
         self.table.doubleClicked.connect(lambda *_: self._edit())
         root.addWidget(self.table, 1)
 
@@ -139,7 +139,7 @@ class CellsScreen(QWidget):
     # --- CRUD ------------------------------------------------------------
     def _add(self) -> None:
         dlg = CellEditor(self.ctx, self.runner, None, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec_() == QDialog.Accepted:
             self.ctx.db.add_cell(dlg.result_cell())
             self.reload()
 
@@ -151,7 +151,7 @@ class CellsScreen(QWidget):
         if cell is None:
             return
         dlg = CellEditor(self.ctx, self.runner, cell, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec_() == QDialog.Accepted:
             self.ctx.db.update_cell(dlg.result_cell())
             self.reload()
 
@@ -161,7 +161,7 @@ class CellsScreen(QWidget):
             return
         if QMessageBox.question(self, "Удалить ячейку?",
                                 "Удалить выбранную ячейку?") \
-                == QMessageBox.StandardButton.Yes:
+                == QMessageBox.Yes:
             self.ctx.db.delete_cell(cell_id)
             self.reload()
 
@@ -252,8 +252,8 @@ class CellsScreen(QWidget):
         return QMessageBox.warning(
             self, "Отправка в ZZap",
             detail + "\n\nПродолжить отправку?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No) == QMessageBox.Yes
 
     def _set_running(self, running: bool, message: str = "") -> None:
         self.btn_run.setEnabled(not running)

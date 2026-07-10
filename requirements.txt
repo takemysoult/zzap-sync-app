@@ -1,13 +1,17 @@
-# Runtime dependencies for the ZZap Sync desktop app (Windows, Python 3.12 x64).
+# Runtime dependencies for the ZZap Sync desktop app (Windows, Python 3.10 x64).
 #
 # Install into the project's 64-bit venv:
-#   py -3.12 -m venv .venv
-#   .venv\Scripts\python -m pip install -r requirements.txt
+#   py -3.10 -m venv .venv310
+#   .venv310\Scripts\python -m pip install -r requirements.txt
 #
 # NOTE: bitness must match the installed 1C platform (x64). Do NOT use a 32-bit venv.
 
 # --- GUI ---
-PySide6>=6.7
+# PySide2/Qt5, NOT PySide6/Qt6: the client PC runs Windows 10 1607 and Qt6
+# requires 1809+ ("DLL load failed while importing QtCore"). Qt5.15 supports
+# Win7+ and also runs fine on Win10 22H2/Win11, so one build serves both.
+# PySide2 is LGPL (commercial-safe); do NOT switch to PyQt5 (GPL).
+PySide2==5.15.2.1
 
 # --- Scheduler (interval jobs, misfire grace, coalescing for catch-up) ---
 APScheduler>=3.10,<4

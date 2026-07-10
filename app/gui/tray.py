@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide2.QtCore import QObject, Qt, QTimer, Signal
+from PySide2.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide2.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .. import paths  # noqa: F401 - kept for parity with other gui modules
 from ..services.scheduler import KIND_FLUSH, RunSummary, SchedulerService
@@ -118,8 +118,8 @@ class TrayController(QObject):
             app.quit()
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason in (QSystemTrayIcon.ActivationReason.DoubleClick,
-                      QSystemTrayIcon.ActivationReason.Trigger):
+        if reason in (QSystemTrayIcon.DoubleClick,
+                      QSystemTrayIcon.Trigger):
             self._open_window()
 
     # --- run results (UI thread, queued) ---------------------------------
@@ -131,8 +131,8 @@ class TrayController(QObject):
             msg = f"Досыл отложенного: отправлено {summary.posted}."
         else:
             msg = f"Выгрузка завершена: отправлено {summary.posted}, ошибок {bad}."
-        icon = (QSystemTrayIcon.MessageIcon.Warning if bad
-                else QSystemTrayIcon.MessageIcon.Information)
+        icon = (QSystemTrayIcon.Warning if bad
+                else QSystemTrayIcon.Information)
         self.tray.showMessage("ZZap Sync", msg, icon, 5000)
         # Refresh the open window so the journal/cells reflect the run.
         if self.window.isVisible():
@@ -141,20 +141,20 @@ class TrayController(QObject):
 
     def _info(self, message: str) -> None:
         self.tray.showMessage("ZZap Sync", message,
-                              QSystemTrayIcon.MessageIcon.Information, 3000)
+                              QSystemTrayIcon.Information, 3000)
 
     # --- icon (painted at runtime; a real asset arrives with Phase 6) -----
     @staticmethod
     def _make_icon() -> QIcon:
         pm = QPixmap(64, 64)
-        pm.fill(Qt.GlobalColor.transparent)
+        pm.fill(Qt.transparent)
         p = QPainter(pm)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
         p.setBrush(QColor(theme.PRIMARY))
         p.drawRoundedRect(4, 4, 56, 56, 14, 14)
         p.setPen(QColor("#FFFFFF"))
-        p.setFont(QFont(theme.UI_FAMILY, 30, QFont.Weight.Bold))
-        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "Z")
+        p.setFont(QFont(theme.UI_FAMILY, 30, QFont.Bold))
+        p.drawText(pm.rect(), Qt.AlignCenter, "Z")
         p.end()
         return QIcon(pm)

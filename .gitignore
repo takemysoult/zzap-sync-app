@@ -1,6 +1,7 @@
 # --- Python virtual environments ---
 .venv/
 .venv32/
+.venv310/
 venv/
 env/
 

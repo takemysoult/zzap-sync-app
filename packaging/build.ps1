@@ -4,9 +4,10 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$py = Join-Path $root ".venv\Scripts\python.exe"
+# Python 3.10 + PySide2 venv: Qt5 runs on Win10 1607 (Qt6 needs 1809+).
+$py = Join-Path $root ".venv310\Scripts\python.exe"
 
-# The installer bundles the Microsoft VC++ runtime (Qt6/PySide6 needs it on clean PCs).
+# The installer bundles the Microsoft VC++ runtime (Qt5/PySide2 needs it on clean PCs).
 # It is not committed (~25 MB) — fetch it here if missing.
 $redist = Join-Path $root "packaging\redist\vc_redist.x64.exe"
 if (-not (Test-Path $redist)) {

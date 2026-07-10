@@ -1,4 +1,4 @@
-"""PySide6 desktop GUI (Phase 3).
+"""PySide2 desktop GUI (Phase 3; ported from PySide6 for Win10 1607 support).
 
 Config + monitoring only — the GUI holds NO business logic. Every screen drives the
 existing service layer (ConnectionManager, CellRunner, the duplicate detector, the

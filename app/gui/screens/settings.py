@@ -9,7 +9,7 @@ None so the screen still builds standalone in tests).
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGroupBox, QHBoxLayout,
+from PySide2.QtWidgets import (QCheckBox, QFormLayout, QGroupBox, QHBoxLayout,
                                QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from ...services import watchdog_task

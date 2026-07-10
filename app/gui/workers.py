@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide2.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from ..services.connection import error_text
 

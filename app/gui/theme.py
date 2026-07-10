@@ -11,8 +11,8 @@ so Qt re-evaluates the stylesheet for that widget.
 """
 from __future__ import annotations
 
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide2.QtGui import QColor, QFont
+from PySide2.QtWidgets import QApplication, QWidget
 
 # --- palette ----------------------------------------------------------------
 BG = "#F5F7FA"            # window background (slate-50-ish)
@@ -201,5 +201,5 @@ def set_status(label, text: str, kind: str = "") -> None:
 
 def mono_font(point_size: int = 9) -> QFont:
     f = QFont(MONO_FAMILY, point_size)
-    f.setStyleHint(QFont.StyleHint.Monospace)
+    f.setStyleHint(QFont.Monospace)
     return f

@@ -16,8 +16,8 @@ from __future__ import annotations
 import logging
 import threading
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMainWindow, QSystemTrayIcon, QTabWidget, QWidget
+from PySide2.QtCore import QTimer
+from PySide2.QtWidgets import QMainWindow, QSystemTrayIcon, QTabWidget, QWidget
 
 from ..services.autostart import AutostartManager
 from ..services.scheduler import SchedulerService
@@ -87,7 +87,7 @@ class MainWindow(QMainWindow):
             # and make closing the window quit the app (app.main set quit-on-close off
             # for the tray case).
             log.warning("Системный трей недоступен — окно останется видимым.")
-            from PySide6.QtWidgets import QApplication
+            from PySide2.QtWidgets import QApplication
             app = QApplication.instance()
             if app is not None:
                 app.setQuitOnLastWindowClosed(True)
@@ -161,5 +161,5 @@ class MainWindow(QMainWindow):
             "ZZap Sync продолжает работать",
             "Приложение свёрнуто в трей и выгружает по расписанию. "
             "Для выхода: правый клик по значку → «Выход».",
-            QSystemTrayIcon.MessageIcon.Information, 6000)
+            QSystemTrayIcon.Information, 6000)
         self.ctx.db.set_bool(SETTING_TRAY_HINT_SHOWN, True)

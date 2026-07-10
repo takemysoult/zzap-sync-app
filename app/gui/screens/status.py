@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout,
+from PySide2.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout,
                                QHeaderView, QLabel, QPlainTextEdit, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -55,14 +55,14 @@ class StatusScreen(QWidget):
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
             ["Начало", "Конец", "Статус", "Строк", "Заметка", "Сообщение"])
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.verticalHeader().setVisible(False)
         hdr = self.table.horizontalHeader()
         # «Начало»/«Конец» — по содержимому, чтобы дата И время помещались целиком.
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(5, QHeaderView.Stretch)
         root.addWidget(self.table, 2)
 
         self.lbl_pending = QLabel("")

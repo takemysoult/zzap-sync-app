@@ -8,7 +8,7 @@ thread (1C COM must not block the UI).
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFormLayout,
+from PySide2.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QPushButton,
                                QRadioButton, QVBoxLayout, QWidget)
@@ -27,7 +27,7 @@ def _query_edit(placeholder: str) -> QPlainTextEdit:
     ed = QPlainTextEdit()
     ed.setPlaceholderText(placeholder)
     ed.setMaximumHeight(56)
-    ed.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+    ed.setLineWrapMode(QPlainTextEdit.WidgetWidth)
     return ed
 
 
@@ -119,7 +119,7 @@ class ConnectionScreen(QWidget):
         creds_form = QFormLayout(creds_box)
         self.ed_usr = QLineEdit()
         self.ed_pwd = QLineEdit()
-        self.ed_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ed_pwd.setEchoMode(QLineEdit.Password)
         creds_form.addRow("Пользователь", self.ed_usr)
         creds_form.addRow("Пароль", self.ed_pwd)
         root.addWidget(creds_box)

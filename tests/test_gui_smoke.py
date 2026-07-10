@@ -1,11 +1,11 @@
-"""Headless smoke tests for the PySide6 GUI (Phase 3).
+"""Headless smoke tests for the PySide2 GUI (Phase 3).
 
 Run offscreen (no display) via QT_QPA_PLATFORM=offscreen. These verify the screens
 construct against a real (temp) Database, the cell editor round-trips a Cell, the
 duplicate banner lights up, and — security-critical — that AsyncRunner delivers a
 worker's result on the UI thread and REDACTS secrets from a failing job's message.
 
-Skipped automatically if PySide6 is unavailable.
+Skipped automatically if PySide2 is unavailable.
 """
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-pytest.importorskip("PySide6")
+pytest.importorskip("PySide2")
 
-from PySide6.QtCore import QThread  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide2.QtCore import QThread  # noqa: E402
+from PySide2.QtWidgets import QApplication  # noqa: E402
 
 from app.db.models import Cabinet, Cell, Connection1C  # noqa: E402
 from app.gui.context import AppContext  # noqa: E402
@@ -149,9 +149,9 @@ def test_cell_editor_allows_empty_warehouse_for_odata(qapp, ctx):
     assert editor.btn_discover.isEnabled() is False
     assert editor.lst_wh.isEnabled() is False
     # _accept must pass despite no warehouse / no price type
-    from PySide6.QtWidgets import QDialog
+    from PySide2.QtWidgets import QDialog
     editor._accept()
-    assert editor.result() == QDialog.DialogCode.Accepted
+    assert editor.result() == QDialog.Accepted
 
 
 def test_cells_screen_has_a_send_nothing_preview_button(qapp, ctx):

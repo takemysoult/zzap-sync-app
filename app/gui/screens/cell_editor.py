@@ -11,8 +11,8 @@ nothing is sent until the user explicitly opts out and confirms.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
+from PySide2.QtCore import Qt
+from PySide2.QtWidgets import (QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMessageBox, QPlainTextEdit,
@@ -30,7 +30,7 @@ _CHECKLIST = (
     "• Колонки: 1=Производитель, 2=Номер, 3=Наименование, 4=Количество, 5=Цена\n"
     "• Данные с 1-й строки (без заголовка)"
 )
-_USER_ROLE = int(Qt.ItemDataRole.UserRole)
+_USER_ROLE = int(Qt.UserRole)
 
 
 class ExclusionImportDialog(QDialog):
@@ -59,8 +59,8 @@ class ExclusionImportDialog(QDialog):
         form.addRow(self.cb_header)
         form.addRow(self.cb_append)
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("class", "primary")
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setProperty("class", "primary")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -108,7 +108,7 @@ class CellEditor(QDialog):
         self.sp_templ = QSpinBox()
         self.sp_templ.setRange(0, 2_147_483_647)
         self.sp_templ.setGroupSeparatorShown(False)
-        self.sp_templ.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.sp_templ.setButtonSymbols(QAbstractSpinBox.NoButtons)
         # Non-editable: a click opens the list so the user picks a discovered price
         # type (free text only invites typos that yield 0 rows). A saved/offline value
         # is always kept in the list by _populate_price_types so nothing is lost.
@@ -171,8 +171,8 @@ class CellEditor(QDialog):
         root.addWidget(checklist)
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("class", "primary")
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setProperty("class", "primary")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
@@ -262,16 +262,16 @@ class CellEditor(QDialog):
         self.lst_wh.clear()
         for w in ordered:
             item = QListWidgetItem(w)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked
                                if w.strip().casefold() in checked_norm
-                               else Qt.CheckState.Unchecked)
+                               else Qt.Unchecked)
             self.lst_wh.addItem(item)
 
     def _checked_warehouses(self) -> list[str]:
         return [self.lst_wh.item(i).text()
                 for i in range(self.lst_wh.count())
-                if self.lst_wh.item(i).checkState() == Qt.CheckState.Checked]
+                if self.lst_wh.item(i).checkState() == Qt.Checked]
 
     # --- discovery -------------------------------------------------------
     def _discover(self) -> None:
@@ -330,7 +330,7 @@ class CellEditor(QDialog):
 
     def _import_exclusions(self) -> None:
         dlg = ExclusionImportDialog(has_existing=bool(self._exclusion_list_id), parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if dlg.exec_() != QDialog.Accepted:
             return
         path, column, skip_header, append = dlg.values()
         from engine.exclusions import read_exclusion_articles
@@ -361,12 +361,12 @@ class CellEditor(QDialog):
         editor = QPlainTextEdit(existing.articles if existing else "")
         lay.addWidget(editor)
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("class", "primary")
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setProperty("class", "primary")
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         lay.addWidget(buttons)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if dlg.exec_() != QDialog.Accepted:
             return
         text = editor.toPlainText()
         if existing is not None:

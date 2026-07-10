@@ -3,8 +3,8 @@
 ; Produces dist\ZZapSync-Setup-<ver>.exe
 
 #define MyAppName "ZZap Sync"
-#define MyAppVersion "1.0.2"
-; (bumped for the VC++ runtime fix — installer now ships vc_redist so Qt loads on clean PCs)
+#define MyAppVersion "1.1.0"
+; (1.1.0 — GUI ported PySide6→PySide2: Qt5 runs on Win10 1607, Qt6 needed 1809+)
 #define MyAppExe "ZZapSync.exe"
 
 [Setup]
@@ -33,7 +33,7 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 [Files]
 Source: "{#SourcePath}..\dist\ZZapSync\*"; DestDir: "{app}"; \
     Flags: recursesubdirs createallsubdirs ignoreversion
-; Microsoft Visual C++ runtime — Qt6/PySide6 needs it (VCRUNTIME/MSVCP + the Universal CRT).
+; Microsoft Visual C++ runtime — Qt5/PySide2 needs it (VCRUNTIME/MSVCP + the Universal CRT).
 ; Bundled and installed silently so the app loads on a clean Windows (fixes the
 ; "DLL load failed while importing QtCore" crash). Removed from disk after install.
 Source: "{#SourcePath}redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall

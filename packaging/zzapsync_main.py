@@ -4,7 +4,7 @@ A plain script (PyInstaller can't freeze ``python -m app.gui`` directly). Delega
 the real GUI entry so ``--minimized`` / ``--watchdog`` flags work in the exe too.
 
 Также пишет САМЫЕ РАННИЕ отметки старта в ``logs/startup_trace.log`` — ещё до импорта
-тяжёлых модулей (PySide6/apscheduler). Если перезапуск зависнет на импорте (как это было
+тяжёлых модулей (PySide2/apscheduler). Если перезапуск зависнет на импорте (как это было
 при ложных срабатываниях сторожа — процесс не оставлял ни одной записи), в trace будет
 видно: есть "entry" но нет "import done" ⇒ завис на импорте; есть "import done" но в
 app.log нет "===старт===" ⇒ завис в начале main().

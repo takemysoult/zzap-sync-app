@@ -6,9 +6,9 @@ import os
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
+pytest.importorskip("PySide2")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide2.QtWidgets import QApplication  # noqa: E402
 
 from app.single_instance import SingleInstance  # noqa: E402
 

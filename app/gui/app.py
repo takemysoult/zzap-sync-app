@@ -113,14 +113,18 @@ def main(argv: list[str] | None = None) -> int:
     diagnostics.start_resource_sampler()
 
     log.info("Старт: импортирую Qt…")
-    from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QApplication
+    from PySide2.QtCore import Qt, QTimer
+    from PySide2.QtWidgets import QApplication
 
     from ..single_instance import SingleInstance
     from .theme import apply_theme
 
     paths.ensure_dirs()
     log.info("Старт: создаю QApplication…")
+    # Qt5 does not scale for high-DPI displays by default (Qt6 did); both
+    # attributes must be set BEFORE the QApplication is constructed.
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setApplicationName("ZZap Sync")
     app.setOrganizationName("ZZap Sync")
@@ -154,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     diagnostics.disarm_startup_guard()   # старт успешен — снимаем страховку
     log.info("Старт завершён — вхожу в цикл событий.")
     try:
-        return app.exec()
+        return app.exec_()
     finally:
         service.shutdown(wait=False)
         ctx.close()

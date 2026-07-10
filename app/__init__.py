@@ -4,6 +4,6 @@ Layers (see ROADMAP.md §3):
   - app.db        — SQLite store + DAL (cells, cabinets, connections, settings, history)
   - app.security  — DPAPI-encrypted secret storage
   - (later) app.services — CellRunner, Scheduler, ConnectionManager
-  - (later) app.ui        — PySide6 screens
+  - (later) app.ui        — PySide2 screens
 """
-__version__ = "1.0.2"
+__version__ = "1.1.0"

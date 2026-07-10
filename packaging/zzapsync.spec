@@ -1,5 +1,6 @@
-# PyInstaller spec for ZZap Sync (onedir, windowed). Build from the project root:
-#   .venv\Scripts\pyinstaller packaging\zzapsync.spec
+# PyInstaller spec for ZZap Sync (onedir, windowed). Build from the project root
+# with the Python 3.10 + PySide2 venv (Qt5 runs on Win10 1607; Qt6 needs 1809+):
+#   .venv310\Scripts\pyinstaller packaging\zzapsync.spec
 import os
 
 ROOT = os.path.dirname(os.path.abspath(SPECPATH))   # project root (parent of packaging/)
@@ -16,6 +17,7 @@ hiddenimports = [
     "app.watchdog",
     "app.single_instance",
     "win32timezone",                       # pywin32/win32com runtime dep
+    "PySide2.QtNetwork",                   # imported inside app.single_instance
     "apscheduler.triggers.interval",
     "apscheduler.triggers.date",
     "apscheduler.executors.pool",
@@ -30,7 +32,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "pytest"],
+    excludes=["tkinter", "pytest", "PySide6"],  # PySide2-only build — never mix Qt5/Qt6
     noarchive=False,
 )
 pyz = PYZ(a.pure)

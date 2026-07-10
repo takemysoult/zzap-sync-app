@@ -8,8 +8,9 @@ old `config.ini` + Task Scheduler CLI with a GUI built around configurable **upl
 > the data model) and `ROADMAP.md` (product definition + phased plan). These are ground truth.
 
 ## Stack
-Python 3.12 (64-bit, to match 1C x64) · PySide6 · APScheduler · SQLite · Windows DPAPI
-for secrets · PyInstaller for packaging.
+Python 3.10 (64-bit, to match 1C x64) · PySide2 (Qt5 — runs on Win10 1607, where the
+client PC lives; Qt6 needs 1809+; Python 3.10 is PySide2's ceiling) · APScheduler ·
+SQLite · Windows DPAPI for secrets · PyInstaller for packaging.
 
 ## Layout
 ```
@@ -22,7 +23,7 @@ app/            Application layer
   db/             SQLite schema + DAL (cells, cabinets, connections, settings, history)
   security/       DPAPI-encrypted secret storage
   services/       ConnectionManager, CellRunner, duplicate detector
-  gui/            PySide6 desktop UI (screens drive the services; no business logic)
+  gui/            PySide2 desktop UI (screens drive the services; no business logic)
   paths.py        Per-user data locations (DB + per-cell work dir under %LOCALAPPDATA%)
 tests/          pytest suite (engine + DAL + secrets + GUI smoke; COM and HTTP mocked)
 reference/      Legacy CLI blueprints for Phase 1 (not part of the app)
@@ -30,16 +31,16 @@ reference/      Legacy CLI blueprints for Phase 1 (not part of the app)
 
 ## Develop
 ```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\python -m pip install -r requirements-dev.txt
-.venv\Scripts\python -m pytest
+py -3.10 -m venv .venv310
+.venv310\Scripts\python -m pip install -r requirements-dev.txt
+.venv310\Scripts\python -m pytest
 ```
 
 The test suite runs without a live 1C or ZZap (COM and HTTP are behind mockable seams).
 
 Run the desktop app (from the 64-bit venv):
 ```powershell
-.venv\Scripts\python -m app.gui
+.venv310\Scripts\python -m app.gui
 ```
 
 ## Safety
@@ -58,7 +59,8 @@ Run the desktop app (from the 64-bit venv):
   cell end-to-end with a 0-row safety guard + pending/retry, the duplicate-across-warehouses
   detector, Excel exclusions import (`.xlsx`/`.xls`), and DAL thread-affinity (WAL). The first
   real ZZap upload is exercised together with Phase 1 live validation.
-- **Phase 3 (GUI) — code complete.** PySide6 desktop app (`app/gui/`): connection, cabinets,
+- **Phase 3 (GUI) — code complete.** PySide2 desktop app (`app/gui/`; built on PySide6,
+  later ported to PySide2 for Win10 1607): connection, cabinets,
   cells (with live 1C dropdowns, exclusions import, duplicate banner, per-template checklist),
   settings, and status/journal screens. All COM/network/CellRunner work runs off the UI thread
   (a per-thread `Database` in workers); secrets are masked and never reloaded into fields.

@@ -11,8 +11,8 @@ the first real upload.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox,
+from PySide2.QtCore import Qt
+from PySide2.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox,
                                QFormLayout, QHBoxLayout, QHeaderView, QLineEdit,
                                QMessageBox, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
@@ -22,7 +22,7 @@ from ..context import AppContext
 
 _DEFAULT_API_URL = "https://b52-api.zzap.pro/api/client/v1/price1c/upload"
 _SAVED_HINT = "•••••••• (сохранён — оставьте пустым, чтобы не менять)"
-_USER_ROLE = int(Qt.ItemDataRole.UserRole)
+_USER_ROLE = int(Qt.UserRole)
 
 
 class CabinetDialog(QDialog):
@@ -34,15 +34,15 @@ class CabinetDialog(QDialog):
         self.ed_name = QLineEdit(cabinet.name if cabinet else "")
         self.ed_url = QLineEdit((cabinet.api_url if cabinet else "") or _DEFAULT_API_URL)
         self.ed_key = QLineEdit()
-        self.ed_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ed_key.setEchoMode(QLineEdit.Password)
         if cabinet and cabinet.has_api_key:
             self.ed_key.setPlaceholderText(_SAVED_HINT)
         form.addRow("Название", self.ed_name)
         form.addRow("API-ключ (zzap-api-key)", self.ed_key)
         form.addRow("URL метода", self.ed_url)
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("class", "primary")
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setProperty("class", "primary")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -76,12 +76,12 @@ class CabinetsScreen(QWidget):
         root = QVBoxLayout(self)
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Название", "API-ключ", "URL метода"])
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch)
+            2, QHeaderView.Stretch)
         self.table.doubleClicked.connect(lambda *_: self._edit())
         root.addWidget(self.table, 1)
 
@@ -119,7 +119,7 @@ class CabinetsScreen(QWidget):
 
     def _add(self) -> None:
         dlg = CabinetDialog(None, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec_() == QDialog.Accepted:
             self.ctx.db.add_cabinet(dlg.result_cabinet(), dlg.new_api_key())
             self.reload()
 
@@ -131,7 +131,7 @@ class CabinetsScreen(QWidget):
         if cabinet is None:
             return
         dlg = CabinetDialog(cabinet, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec_() == QDialog.Accepted:
             key = dlg.new_api_key()
             self.ctx.db.update_cabinet(dlg.result_cabinet(), api_key=key,
                                        update_api_key=key is not None)
@@ -143,6 +143,6 @@ class CabinetsScreen(QWidget):
             return
         if QMessageBox.question(self, "Удалить кабинет?",
                                 "Удалить выбранный кабинет ZZap?") \
-                == QMessageBox.StandardButton.Yes:
+                == QMessageBox.Yes:
             self.ctx.db.delete_cabinet(cab_id)
             self.reload()
