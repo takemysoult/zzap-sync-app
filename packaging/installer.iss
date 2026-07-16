@@ -3,7 +3,8 @@
 ; Produces dist\ZZapSync-Setup-<ver>.exe
 
 #define MyAppName "ZZap Sync"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
+; (1.2.0 — e-mail delivery channel: прайс письмом с вкладки «Почта»)
 ; (1.1.0 — GUI ported PySide6→PySide2: Qt5 runs on Win10 1607, Qt6 needed 1809+)
 #define MyAppExe "ZZapSync.exe"
 
