@@ -38,6 +38,26 @@ class ComConfig:
 
 
 @dataclass
+class EmailConfig:
+    """One SMTP mailbox + recipients — the «отправить прайс на почту» target.
+
+    An alternative delivery channel to ZZap: the built XLSX goes out as an e-mail
+    attachment from the user's own mailbox (`login`) to `to_addrs`. `security`
+    picks the transport: 'ssl' (SMTPS, обычно порт 465), 'starttls' (обычно 587)
+    or 'none' (без шифрования — только для внутренних серверов).
+    """
+    smtp_host: str
+    smtp_port: int
+    login: str
+    password: str
+    to_addrs: list[str]
+    security: str = "ssl"        # 'ssl' | 'starttls' | 'none'
+    from_addr: str = ""          # пусто = login
+    subject: str = ""            # пусто = «Прайс-лист от <дата>»
+    body: str = ""               # пусто = стандартный текст письма
+
+
+@dataclass
 class OutputConfig:
     """How the XLSX is laid out (column order under the ZZap template mapping)."""
     file_name: str = "price.xlsx"

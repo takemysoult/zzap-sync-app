@@ -1,6 +1,8 @@
--- ZZap Sync app — SQLite schema (version 1).
--- Applied by app.db.dal.Database when PRAGMA user_version = 0, then user_version := 1.
--- Data model per ROADMAP.md §4. Secrets are stored as DPAPI BLOBs, never plaintext.
+-- ZZap Sync app — SQLite schema (version 3).
+-- Applied by app.db.dal.Database when PRAGMA user_version = 0, then
+-- user_version := SCHEMA_VERSION. Older databases are upgraded incrementally
+-- (see dal._migrate). Data model per ROADMAP.md §4. Secrets are stored as DPAPI
+-- BLOBs, never plaintext.
 
 -- A 1C connection target + credentials. `source` picks the read path:
 --   'com'   — external COM connection (kind = 'server'|'file'; srvr/ref/file_path/progid).
@@ -36,6 +38,20 @@ CREATE TABLE IF NOT EXISTS cabinet (
     api_url     TEXT    NOT NULL DEFAULT 'https://b52-api.zzap.pro/api/client/v1/price1c/upload'
 );
 
+-- An SMTP mailbox (schema v3) — the account the user "logs into" so the app can
+-- e-mail the built price list from that address. Cells with target='email'
+-- reference an account. The SMTP password is DPAPI-encrypted like other secrets.
+CREATE TABLE IF NOT EXISTS email_account (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT    NOT NULL,
+    smtp_host    TEXT    NOT NULL DEFAULT '',   -- e.g. smtp.mail.ru
+    smtp_port    INTEGER NOT NULL DEFAULT 465,
+    security     TEXT    NOT NULL DEFAULT 'ssl' CHECK (security IN ('ssl','starttls','none')),
+    login        TEXT    NOT NULL DEFAULT '',   -- the mailbox address / SMTP login
+    from_addr    TEXT    NOT NULL DEFAULT '',   -- optional explicit From; '' = login
+    password_enc BLOB                           -- DPAPI-encrypted; NULL if unset
+);
+
 -- A reusable list of article numbers to exclude from uploads (the exclude.txt mechanism).
 CREATE TABLE IF NOT EXISTS exclusion_list (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +59,9 @@ CREATE TABLE IF NOT EXISTS exclusion_list (
     articles TEXT NOT NULL DEFAULT ''           -- one article per line; '#' = comment
 );
 
--- An upload job: (warehouse(s) + price type) from 1C -> a ZZap code_templ.
+-- An upload job: (warehouse(s) + price type) from 1C -> a delivery target.
+-- target='zzap'  -> cabinet_id + code_templ (upload to a ZZap template);
+-- target='email' -> email_account_id + email_to (XLSX e-mailed as an attachment).
 CREATE TABLE IF NOT EXISTS cell (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     name              TEXT    NOT NULL,
@@ -55,7 +73,11 @@ CREATE TABLE IF NOT EXISTS cell (
     warehouses        TEXT    NOT NULL DEFAULT '[]',  -- JSON array of warehouse names
     exclusion_list_id INTEGER REFERENCES exclusion_list(id) ON DELETE SET NULL,
     include_header    INTEGER NOT NULL DEFAULT 0,      -- ZZap templates expect NO header
-    columns           TEXT    NOT NULL DEFAULT '{"producer":1,"number":2,"name":3,"quantity":4,"price":5}'
+    columns           TEXT    NOT NULL DEFAULT '{"producer":1,"number":2,"name":3,"quantity":4,"price":5}',
+    target            TEXT    NOT NULL DEFAULT 'zzap', -- 'zzap' | 'email' (schema v3)
+    email_account_id  INTEGER REFERENCES email_account(id) ON DELETE SET NULL,
+    email_to          TEXT    NOT NULL DEFAULT '',     -- recipients (comma/space separated)
+    email_subject     TEXT    NOT NULL DEFAULT ''      -- '' = default subject with date
 );
 
 -- Key/value app settings (interval_hours, autostart, watchdog_enabled, ...).

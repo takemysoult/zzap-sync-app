@@ -20,7 +20,7 @@ pytest.importorskip("PySide2")
 from PySide2.QtCore import QThread  # noqa: E402
 from PySide2.QtWidgets import QApplication  # noqa: E402
 
-from app.db.models import Cabinet, Cell, Connection1C  # noqa: E402
+from app.db.models import Cabinet, Cell, Connection1C, EmailAccount  # noqa: E402
 from app.gui.context import AppContext  # noqa: E402
 from app.gui.main_window import MainWindow  # noqa: E402
 from app.gui.screens.cell_editor import CellEditor  # noqa: E402
@@ -82,7 +82,7 @@ def _seed(ctx: AppContext):
 def test_main_window_builds(qapp, ctx):
     _seed(ctx)
     win = MainWindow(ctx)
-    assert win.tabs.count() == 5
+    assert win.tabs.count() == 6
     win.close()
 
 
@@ -105,6 +105,42 @@ def test_new_cell_editor_defaults_to_disabled(qapp, ctx):
     _seed(ctx)
     editor = CellEditor(ctx, AsyncRunner(), None)
     assert editor.cb_enabled.isChecked() is False
+
+
+def test_cell_editor_email_target_round_trips(qapp, ctx):
+    conn_id, cab_id = _seed(ctx)
+    acc_id = ctx.db.add_email_account(
+        EmailAccount(name="Рабочая", smtp_host="smtp.mail.ru",
+                     login="me@mail.ru"), password="app-pass")
+    cell = Cell(name="Почтовая", enabled=True, connection_id=conn_id,
+                cabinet_id=None, code_templ=0, price_type="ZZap",
+                warehouses=["Склад 1"], target="email", email_account_id=acc_id,
+                email_to="client@example.com", email_subject="Прайс")
+    cell.id = ctx.db.add_cell(cell)
+    editor = CellEditor(ctx, AsyncRunner(), ctx.db.get_cell(cell.id))
+    # email target selected -> email fields visible, zzap fields hidden
+    assert editor._current_target() == "email"
+    assert editor.cmb_email.currentData() == acc_id
+    out = editor.result_cell()
+    assert out.target == "email"
+    assert out.email_account_id == acc_id
+    assert out.email_to == "client@example.com"
+    assert out.email_subject == "Прайс"
+    assert out.cabinet_id is None and out.code_templ == 0
+
+
+def test_zzap_cell_editor_clears_email_fields(qapp, ctx):
+    conn_id, cab_id = _seed(ctx)
+    acc_id = ctx.db.add_email_account(
+        EmailAccount(name="A", smtp_host="h", login="a@b.c"), password="p")
+    cell = Cell(name="Я", enabled=True, connection_id=conn_id, cabinet_id=cab_id,
+                code_templ=42, price_type="ZZap", warehouses=["Склад 1"],
+                target="zzap", email_account_id=acc_id, email_to="x@y.z")
+    cell.id = ctx.db.add_cell(cell)
+    editor = CellEditor(ctx, AsyncRunner(), ctx.db.get_cell(cell.id))
+    out = editor.result_cell()
+    assert out.target == "zzap" and out.cabinet_id == cab_id
+    assert out.email_account_id is None and out.email_to == ""
 
 
 def test_connection_screen_odata_round_trip(qapp, ctx):

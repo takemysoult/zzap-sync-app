@@ -51,7 +51,7 @@ class CellsScreen(QWidget):
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Название", "Вкл.", "Кабинет", "code_templ", "Вид цены", "Склады"])
+            ["Название", "Вкл.", "Куда", "code_templ", "Вид цены", "Склады"])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -99,12 +99,17 @@ class CellsScreen(QWidget):
         cells = self.ctx.db.list_cells()
         self.table.setRowCount(len(cells))
         for row, cell in enumerate(cells):
-            cab = cabinets.get(cell.cabinet_id, "—")
+            if cell.target == "email":
+                where = "Почта → " + (cell.email_to or "—")
+                templ = "—"
+            else:
+                where = "ZZap: " + (cabinets.get(cell.cabinet_id) or "—")
+                templ = str(cell.code_templ)
             values = [
                 cell.name,
                 "да" if cell.enabled else "нет",
-                cab,
-                str(cell.code_templ),
+                where,
+                templ,
                 cell.price_type,
                 ", ".join(cell.warehouses),
             ]
@@ -173,9 +178,13 @@ class CellsScreen(QWidget):
         cell = self.ctx.db.get_cell(cell_id)
         if cell is None:
             return
-        if not self._confirm_real(
-                f"Ячейка «{cell.name}» будет отправлена в ZZap (шаблон "
-                f"{cell.code_templ} будет заменён)."):
+        if cell.target == "email":
+            detail = (f"Прайс ячейки «{cell.name}» будет отправлен на почту: "
+                      f"{cell.email_to or '—'}.")
+        else:
+            detail = (f"Ячейка «{cell.name}» будет отправлена в ZZap (шаблон "
+                      f"{cell.code_templ} будет заменён).")
+        if not self._confirm_real(detail):
             return
         self._set_running(True, f"Выполняю ячейку «{cell.name}»…")
         self.runner.submit(lambda: self._do_run_one(cell_id),
@@ -188,7 +197,8 @@ class CellsScreen(QWidget):
                                    "Нет включённых ячеек для запуска.")
             return
         if not self._confirm_real(
-                f"Отправка в ZZap затронет включённых ячеек: {len(cells)}."):
+                f"Будут выполнены включённые ячейки: {len(cells)} "
+                "(отправка в ZZap и/или на почту)."):
             return
         self._set_running(True, f"Выполняю включённые ячейки ({len(cells)})…")
         self.runner.submit(self._do_run_all,
@@ -250,7 +260,7 @@ class CellsScreen(QWidget):
 
     def _confirm_real(self, detail: str) -> bool:
         return QMessageBox.warning(
-            self, "Отправка в ZZap",
+            self, "Подтверждение отправки",
             detail + "\n\nПродолжить отправку?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No) == QMessageBox.Yes

@@ -329,6 +329,35 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
 - **Autostart** targets `sys.executable` when frozen (the installed exe). After go-live, **disable the
   old CLI's Windows Task Scheduler job** (same template 330017019) to avoid double uploads.
 
+### E-mail delivery (2026-07-16, v1.2.0, branch email-delivery)
+- **Второй канал доставки:** `cell.target` = `'zzap'` (по умолчанию; поведение прежнее) или
+  `'email'` — собранный XLSX уходит письмом-вложением с ящика пользователя. Новая таблица
+  `email_account` (schema **v3**; SMTP host/port/security='ssl'|'starttls'|'none', login,
+  from_addr, password_enc — DPAPI как у остальных секретов) + колонки cell
+  `target/email_account_id/email_to/email_subject` (ALTER TABLE, additive; старые ячейки
+  получают target='zzap'). Получатели — у ЯЧЕЙКИ (`email_to`, запятая/`;`/пробел),
+  ящик-отправитель — общий справочник (вкладка «Почта»).
+- **`engine/email_client.py`** — зеркало zzap_client: `send_price_email` (smtplib +
+  EmailMessage, XLSX как правильный MIME-тип), `send_test_email` (проверка входа с
+  вкладки «Почта» — у почты, в отличие от ZZap, есть дешёвая проверка учётных данных),
+  `parse_recipients`. Таксономия: `EmailPermanentError` (auth 535 — текст напоминает про
+  «пароль приложения» для Mail.ru/Яндекс/Gmail; отклонённые адреса; 5xx) vs
+  `EmailTransientError` (connect/timeout/disconnect/4xx) — CellRunner обрабатывает оба
+  канала одной логикой (permanent⇒ERROR, transient⇒pending+досыл). SMTP-клиент
+  инжектируется (`smtp_factory`) — тесты без сети.
+- **CellRunner:** `_upload` ветвится по target (email: `_email_config` возвращает
+  `(cfg|None, причина)`); `retry_pending` досылает pending тем же каналом, что и ячейка;
+  0-строк-guard действует и для почты (пустой прайс = ошибка конфигурации). Почтовая
+  ячейка НЕ требует кабинета (`_build` проверяет ящик+получателей вместо него);
+  `result_cell` в редакторе обнуляет поля чужого канала, поэтому детектор задвоений
+  (фильтр `cabinet_id is not None`) почтовые ячейки не видит.
+- **GUI:** новая вкладка «Почта» (`app/gui/screens/email_accounts.py`, пресеты
+  Mail.ru/Яндекс/Gmail — всем нужен пароль приложения; пароль маскируется и не
+  перечитывается — правило как у API-ключа), в редакторе ячейки combo «Куда отправлять»
+  (в Qt5 нет `QFormLayout.setRowVisible` — строки прячутся через `labelForField`).
+  Тесты: 191 (было 164), новые test_email_client / test_email_dal /
+  test_cell_runner_email + smoke редактора.
+
 ### Still open (later phases)
 - **Phase 4 process model — DONE (2026-06-24):** see the Phase 4 subsection above. (Decision was
   locked 2026-06-23: APScheduler inside the app + system tray, NOT the Windows Task Scheduler.)

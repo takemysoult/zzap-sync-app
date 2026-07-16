@@ -6,4 +6,4 @@ Layers (see ROADMAP.md §3):
   - (later) app.services — CellRunner, Scheduler, ConnectionManager
   - (later) app.ui        — PySide2 screens
 """
-__version__ = "1.1.0"
+__version__ = "1.2.0"

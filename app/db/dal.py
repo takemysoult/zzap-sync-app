@@ -24,10 +24,11 @@ from pathlib import Path
 from engine.transform import normalize_articles, parse_exclusions
 
 from ..security.secrets import Cipher, DpapiCipher
-from .models import Cabinet, Cell, Connection1C, ExclusionList, RunHistory
+from .models import (Cabinet, Cell, Connection1C, EmailAccount, ExclusionList,
+                     RunHistory)
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Columns added to connection_1c in schema v2 (OData source support). Applied to
 # existing v1 databases by ALTER TABLE ADD COLUMN — purely additive, so no data is
@@ -42,6 +43,29 @@ _V2_CONNECTION_COLUMNS = (
     ("odata_producers_query", "TEXT NOT NULL DEFAULT ''"),
     ("odata_verify_ssl", "INTEGER NOT NULL DEFAULT 1"),
 )
+
+# Columns added to cell in schema v3 (e-mail delivery target). Additive, like v2.
+_V3_CELL_COLUMNS = (
+    ("target", "TEXT NOT NULL DEFAULT 'zzap'"),
+    ("email_account_id", "INTEGER REFERENCES email_account(id) ON DELETE SET NULL"),
+    ("email_to", "TEXT NOT NULL DEFAULT ''"),
+    ("email_subject", "TEXT NOT NULL DEFAULT ''"),
+)
+
+# email_account DDL for the v2 -> v3 upgrade. Kept in sync with schema.sql by
+# test_email_dal (fresh schema and migrated schema must expose the same columns).
+_V3_EMAIL_ACCOUNT_DDL = """
+CREATE TABLE IF NOT EXISTS email_account (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT    NOT NULL,
+    smtp_host    TEXT    NOT NULL DEFAULT '',
+    smtp_port    INTEGER NOT NULL DEFAULT 465,
+    security     TEXT    NOT NULL DEFAULT 'ssl' CHECK (security IN ('ssl','starttls','none')),
+    login        TEXT    NOT NULL DEFAULT '',
+    from_addr    TEXT    NOT NULL DEFAULT '',
+    password_enc BLOB
+)
+"""
 
 _DEFAULT_API_URL = "https://b52-api.zzap.pro/api/client/v1/price1c/upload"
 _DEFAULT_COLUMNS = {"producer": 1, "number": 2, "name": 3, "quantity": 4, "price": 5}
@@ -77,7 +101,9 @@ class Database:
         # Incremental upgrades for databases created by an older app version.
         if version < 2:
             self._upgrade_to_v2()
-        # Future schema bumps: if version < 3: self._upgrade_to_v3(); ...
+        if version < 3:
+            self._upgrade_to_v3()
+        # Future schema bumps: if version < 4: self._upgrade_to_v4(); ...
 
     def _upgrade_to_v2(self) -> None:
         """v1 -> v2: add OData source columns to connection_1c (additive, data-safe)."""
@@ -88,6 +114,20 @@ class Database:
                 self._conn.execute(
                     f"ALTER TABLE connection_1c ADD COLUMN {name} {decl}")
         self._conn.execute("PRAGMA user_version = 2")
+        self._conn.commit()
+
+    def _upgrade_to_v3(self) -> None:
+        """v2 -> v3: e-mail delivery — email_account table + cell target columns.
+
+        Additive and data-safe: existing cells get target='zzap' (their current
+        behaviour), nothing else is touched.
+        """
+        self._conn.execute(_V3_EMAIL_ACCOUNT_DDL)
+        existing = {r["name"] for r in self._conn.execute("PRAGMA table_info(cell)")}
+        for name, decl in _V3_CELL_COLUMNS:
+            if name not in existing:
+                self._conn.execute(f"ALTER TABLE cell ADD COLUMN {name} {decl}")
+        self._conn.execute("PRAGMA user_version = 3")
         self._conn.commit()
 
     def close(self) -> None:
@@ -240,6 +280,65 @@ class Database:
         return self._dec(row["api_key_enc"]) if row else None
 
     # ==================================================================
+    # email_account
+    # ==================================================================
+    def add_email_account(self, account: EmailAccount,
+                          password: str | None = None) -> int:
+        cur = self._conn.execute(
+            """INSERT INTO email_account
+               (name, smtp_host, smtp_port, security, login, from_addr, password_enc)
+               VALUES (?,?,?,?,?,?,?)""",
+            (account.name, account.smtp_host, int(account.smtp_port),
+             account.security, account.login, account.from_addr,
+             self._enc(password)),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def get_email_account(self, account_id: int) -> EmailAccount | None:
+        row = self._conn.execute(
+            "SELECT * FROM email_account WHERE id = ?", (account_id,)).fetchone()
+        return _row_to_email_account(row) if row else None
+
+    def list_email_accounts(self) -> list[EmailAccount]:
+        rows = self._conn.execute("SELECT * FROM email_account ORDER BY id").fetchall()
+        return [_row_to_email_account(r) for r in rows]
+
+    def update_email_account(self, account: EmailAccount,
+                             password: str | None = None,
+                             update_password: bool = False) -> None:
+        """Update an account. The password is only touched when update_password=True
+        (so callers can save other fields without clearing the stored secret)."""
+        if account.id is None:
+            raise ValueError("update_email_account requires account.id")
+        if update_password:
+            self._conn.execute(
+                """UPDATE email_account SET name=?, smtp_host=?, smtp_port=?,
+                   security=?, login=?, from_addr=?, password_enc=? WHERE id=?""",
+                (account.name, account.smtp_host, int(account.smtp_port),
+                 account.security, account.login, account.from_addr,
+                 self._enc(password), account.id),
+            )
+        else:
+            self._conn.execute(
+                """UPDATE email_account SET name=?, smtp_host=?, smtp_port=?,
+                   security=?, login=?, from_addr=? WHERE id=?""",
+                (account.name, account.smtp_host, int(account.smtp_port),
+                 account.security, account.login, account.from_addr, account.id),
+            )
+        self._conn.commit()
+
+    def delete_email_account(self, account_id: int) -> None:
+        self._conn.execute("DELETE FROM email_account WHERE id = ?", (account_id,))
+        self._conn.commit()
+
+    def get_email_account_password(self, account_id: int) -> str | None:
+        row = self._conn.execute(
+            "SELECT password_enc FROM email_account WHERE id = ?",
+            (account_id,)).fetchone()
+        return self._dec(row["password_enc"]) if row else None
+
+    # ==================================================================
     # exclusion_list
     # ==================================================================
     def add_exclusion_list(self, name: str, articles: str = "") -> int:
@@ -325,13 +424,15 @@ class Database:
         cur = self._conn.execute(
             """INSERT INTO cell
                (name, enabled, connection_id, cabinet_id, code_templ, price_type,
-                warehouses, exclusion_list_id, include_header, columns)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                warehouses, exclusion_list_id, include_header, columns,
+                target, email_account_id, email_to, email_subject)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (cell.name, int(cell.enabled), cell.connection_id, cell.cabinet_id,
              cell.code_templ, cell.price_type,
              json.dumps(cell.warehouses, ensure_ascii=False),
              cell.exclusion_list_id, int(cell.include_header),
-             json.dumps(cell.columns)),
+             json.dumps(cell.columns),
+             cell.target, cell.email_account_id, cell.email_to, cell.email_subject),
         )
         self._conn.commit()
         return int(cur.lastrowid)
@@ -353,12 +454,15 @@ class Database:
         self._conn.execute(
             """UPDATE cell SET name=?, enabled=?, connection_id=?, cabinet_id=?,
                code_templ=?, price_type=?, warehouses=?, exclusion_list_id=?,
-               include_header=?, columns=? WHERE id=?""",
+               include_header=?, columns=?, target=?, email_account_id=?,
+               email_to=?, email_subject=? WHERE id=?""",
             (cell.name, int(cell.enabled), cell.connection_id, cell.cabinet_id,
              cell.code_templ, cell.price_type,
              json.dumps(cell.warehouses, ensure_ascii=False),
              cell.exclusion_list_id, int(cell.include_header),
-             json.dumps(cell.columns), cell.id),
+             json.dumps(cell.columns),
+             cell.target, cell.email_account_id, cell.email_to, cell.email_subject,
+             cell.id),
         )
         self._conn.commit()
 
@@ -475,6 +579,15 @@ def _row_to_cabinet(row: sqlite3.Row) -> Cabinet:
     )
 
 
+def _row_to_email_account(row: sqlite3.Row) -> EmailAccount:
+    return EmailAccount(
+        id=row["id"], name=row["name"], smtp_host=row["smtp_host"],
+        smtp_port=int(row["smtp_port"]), security=row["security"],
+        login=row["login"], from_addr=row["from_addr"],
+        has_password=row["password_enc"] is not None,
+    )
+
+
 def _row_to_cell(row: sqlite3.Row) -> Cell:
     try:
         warehouses = json.loads(row["warehouses"]) or []
@@ -490,6 +603,9 @@ def _row_to_cell(row: sqlite3.Row) -> Cell:
         code_templ=row["code_templ"], price_type=row["price_type"],
         warehouses=warehouses, exclusion_list_id=row["exclusion_list_id"],
         include_header=bool(row["include_header"]), columns=columns,
+        target=row["target"] or "zzap",
+        email_account_id=row["email_account_id"],
+        email_to=row["email_to"] or "", email_subject=row["email_subject"] or "",
     )
 
 

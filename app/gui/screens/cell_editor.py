@@ -100,15 +100,29 @@ class CellEditor(QDialog):
     def _build(self) -> None:
         root = QVBoxLayout(self)
         form = QFormLayout()
+        self._form = form
 
         self.ed_name = QLineEdit()
         self.cb_enabled = QCheckBox("Ячейка включена (участвует в авто-выгрузке)")
+        # Delivery channel: upload to a ZZap template or e-mail the XLSX.
+        self.cmb_target = QComboBox()
+        self.cmb_target.addItem("Кабинет ZZap", "zzap")
+        self.cmb_target.addItem("На почту (Excel во вложении)", "email")
+        self.cmb_target.currentIndexChanged.connect(self._sync_target_ui)
         self.cmb_cabinet = QComboBox()
         self.cmb_conn = QComboBox()
         self.sp_templ = QSpinBox()
         self.sp_templ.setRange(0, 2_147_483_647)
         self.sp_templ.setGroupSeparatorShown(False)
         self.sp_templ.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        # E-mail target fields (hidden while target == 'zzap').
+        self.cmb_email = QComboBox()
+        self.ed_email_to = QLineEdit()
+        self.ed_email_to.setPlaceholderText(
+            "адрес@получателя.ру — можно несколько, через запятую")
+        self.ed_email_subject = QLineEdit()
+        self.ed_email_subject.setPlaceholderText(
+            "пусто = «Прайс-лист от <дата>»")
         # Non-editable: a click opens the list so the user picks a discovered price
         # type (free text only invites typos that yield 0 rows). A saved/offline value
         # is always kept in the list by _populate_price_types so nothing is lost.
@@ -117,9 +131,13 @@ class CellEditor(QDialog):
 
         form.addRow("Название", self.ed_name)
         form.addRow("", self.cb_enabled)
+        form.addRow("Куда отправлять", self.cmb_target)
         form.addRow("Кабинет ZZap", self.cmb_cabinet)
         form.addRow("Подключение 1С", self.cmb_conn)
         form.addRow("Код шаблона (code_templ)", self.sp_templ)
+        form.addRow("Почтовый ящик («От кого»)", self.cmb_email)
+        form.addRow("Получатели", self.ed_email_to)
+        form.addRow("Тема письма", self.ed_email_subject)
         form.addRow("Вид цены", self.cmb_price)
         root.addLayout(form)
 
@@ -165,10 +183,10 @@ class CellEditor(QDialog):
         exc_l.addLayout(exc_btns)
         root.addWidget(exc_box)
 
-        checklist = QLabel(_CHECKLIST)
-        checklist.setWordWrap(True)
-        checklist.setProperty("role", "checklist")
-        root.addWidget(checklist)
+        self.lbl_checklist = QLabel(_CHECKLIST)
+        self.lbl_checklist.setWordWrap(True)
+        self.lbl_checklist.setProperty("role", "checklist")
+        root.addWidget(self.lbl_checklist)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -182,12 +200,21 @@ class CellEditor(QDialog):
         self.ed_name.setText(cell.name)
         self.cb_enabled.setChecked(cell.enabled)
         self.sp_templ.setValue(int(cell.code_templ or 0))
+        self._select_data(self.cmb_target, cell.target or "zzap")
 
         self.cmb_cabinet.clear()
         self.cmb_cabinet.addItem("— не выбран —", None)
         for cab in self.ctx.db.list_cabinets():
             self.cmb_cabinet.addItem(cab.name, cab.id)
         self._select_data(self.cmb_cabinet, cell.cabinet_id)
+
+        self.cmb_email.clear()
+        self.cmb_email.addItem("— не выбран —", None)
+        for acc in self.ctx.db.list_email_accounts():
+            self.cmb_email.addItem(f"{acc.name} ({acc.login})", acc.id)
+        self._select_data(self.cmb_email, cell.email_account_id)
+        self.ed_email_to.setText(cell.email_to)
+        self.ed_email_subject.setText(cell.email_subject)
 
         self.cmb_conn.clear()
         self.cmb_conn.addItem("— не выбрано —", None)
@@ -209,6 +236,27 @@ class CellEditor(QDialog):
         self._populate_warehouses(warehouses, checked=cell.warehouses)
         self._refresh_exclusions_label()
         self._sync_source_ui()
+        self._sync_target_ui()
+
+    def _current_target(self) -> str:
+        return self.cmb_target.currentData() or "zzap"
+
+    def _set_row_visible(self, widget, visible: bool) -> None:
+        """Show/hide a QFormLayout field together with its label (Qt5 has no
+        setRowVisible, so both widgets are toggled by hand)."""
+        widget.setVisible(visible)
+        label = self._form.labelForField(widget)
+        if label is not None:
+            label.setVisible(visible)
+
+    def _sync_target_ui(self) -> None:
+        """Toggle the ZZap-vs-почта field sets; the checklist is ZZap-specific."""
+        email = self._current_target() == "email"
+        for w in (self.cmb_cabinet, self.sp_templ):
+            self._set_row_visible(w, not email)
+        for w in (self.cmb_email, self.ed_email_to, self.ed_email_subject):
+            self._set_row_visible(w, email)
+        self.lbl_checklist.setVisible(not email)
 
     def _selected_conn_source(self) -> str:
         """'com' | 'odata' for the currently selected connection (default 'com')."""
@@ -387,6 +435,19 @@ class CellEditor(QDialog):
         if not self.ed_name.text().strip():
             QMessageBox.warning(self, "Проверьте поля", "Укажите название ячейки.")
             return
+        if self._current_target() == "email":
+            if self.cmb_email.currentData() is None:
+                QMessageBox.warning(self, "Проверьте поля",
+                                    "Выберите почтовый ящик (добавляется на "
+                                    "вкладке «Почта»).")
+                return
+            recipients = [r for r in self.ed_email_to.text().replace(";", ",").split(",")
+                          if r.strip()]
+            if not recipients or any("@" not in r for r in recipients):
+                QMessageBox.warning(self, "Проверьте поля",
+                                    "Укажите адрес получателя прайса (можно "
+                                    "несколько, через запятую).")
+                return
         # Склад/вид цены обязательны только для COM-подключения; для OData фильтрация
         # задаётся в запросах самого подключения.
         if self._selected_conn_source() != "odata":
@@ -401,16 +462,25 @@ class CellEditor(QDialog):
 
     def result_cell(self) -> Cell:
         c = self._cell
+        target = self._current_target()
+        # Обнуляем поля другого канала, чтобы почтовая ячейка не тянула кабинет
+        # (иначе детектор задвоений считал бы её ZZap-ячейкой) и наоборот.
         return Cell(
             id=c.id,
             name=self.ed_name.text().strip(),
             enabled=self.cb_enabled.isChecked(),
             connection_id=self.cmb_conn.currentData(),
-            cabinet_id=self.cmb_cabinet.currentData(),
-            code_templ=int(self.sp_templ.value()),
+            cabinet_id=self.cmb_cabinet.currentData() if target == "zzap" else None,
+            code_templ=int(self.sp_templ.value()) if target == "zzap" else 0,
             price_type=self.cmb_price.currentText().strip(),
             warehouses=self._checked_warehouses(),
             exclusion_list_id=self._exclusion_list_id,
             include_header=c.include_header,
             columns=c.columns,
+            target=target,
+            email_account_id=(self.cmb_email.currentData()
+                              if target == "email" else None),
+            email_to=self.ed_email_to.text().strip() if target == "email" else "",
+            email_subject=(self.ed_email_subject.text().strip()
+                           if target == "email" else ""),
         )

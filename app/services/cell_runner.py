@@ -8,7 +8,8 @@ Pipeline for a single cell (ROADMAP §3 / PROMPT B.1):
       -> clean_rows
       -> apply_exclusions              (the cell's exclusion_list)
       -> build_xlsx(include_header=False, the cell's columns)
-      -> upload_price(api_key, code_templ)   (ZZap)
+      -> upload_price(api_key, code_templ)   (ZZap; cell.target == 'zzap')
+         — or — send_price_email(smtp account, recipients)  (cell.target == 'email')
       -> record run_history + per-cell Delivery (journal / state / pending)
 
 **Safety (0-row guard):** a real upload FULLY REPLACES the ZZap template, so a build
@@ -37,8 +38,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from engine.config import DEFAULT_ZZAP_API_URL, ComConfig, OdataConfig, ZzapConfig
+from engine.config import (DEFAULT_ZZAP_API_URL, ComConfig, EmailConfig,
+                           OdataConfig, ZzapConfig)
 from engine.delivery import Delivery
+from engine.email_client import (EmailPermanentError, parse_recipients,
+                                 send_price_email)
 from engine.query_builder import build_price_query
 from engine.sources.base import PriceSource
 from engine.sources.com import ComPriceSource
@@ -62,6 +66,11 @@ RUN_RESEND_OK = "RESEND_OK"
 SourceFactory = Callable[[ComConfig], PriceSource]
 OdataSourceFactory = Callable[[OdataConfig], PriceSource]
 Uploader = Callable[..., dict]
+EmailSender = Callable[..., dict]
+
+# Cell.target values (delivery channel).
+TARGET_ZZAP = "zzap"
+TARGET_EMAIL = "email"
 
 # Dry-run («Собрать файл без отправки»): the built file and the handoff JSON the child
 # process leaves for the GUI. Kept apart from the real price.xlsx so a preview can never
@@ -131,6 +140,7 @@ class CellRunner:
                  source_factory: SourceFactory = ComPriceSource,
                  odata_source_factory: OdataSourceFactory = OdataPriceSource,
                  uploader: Uploader = upload_price,
+                 email_sender: EmailSender = send_price_email,
                  connection_manager: ConnectionManager | None = None,
                  network_check: Callable[[], bool] | None = None) -> None:
         self.db = db
@@ -138,6 +148,7 @@ class CellRunner:
         self._source_factory = source_factory
         self._odata_source_factory = odata_source_factory
         self._uploader = uploader
+        self._email_sender = email_sender
         self._cm = connection_manager or ConnectionManager()
         # Optional pre-POST reachability probe (Phase 4 offline recovery). When it
         # returns False the file is staged to pending WITHOUT an HTTP attempt — the
@@ -165,8 +176,13 @@ class CellRunner:
 
         # Safety: a real ZZap upload FULLY REPLACES the template, so a 0-row file would
         # silently wipe it. Refuse (ERROR) instead of publishing an empty price list.
+        # For e-mail cells an empty file is not destructive, but 0 rows almost always
+        # means a misconfiguration — refuse too, so the journal flags it loudly.
         if rows_built == 0:
-            msg = ("1С вернула 0 строк — боевая выгрузка отменена, чтобы не очистить "
+            msg = ("1С вернула 0 строк — отправка отменена (пустой прайс не "
+                   "отправляем). Проверьте фильтры/подключение ячейки."
+                   if cell.target == TARGET_EMAIL else
+                   "1С вернула 0 строк — боевая выгрузка отменена, чтобы не очистить "
                    "шаблон ZZap. Проверьте склады/вид цены/фильтры ячейки.")
             log.warning("Cell %s: 0 строк — боевая выгрузка отменена.", cell.id)
             delivery.journal(RUN_ERROR, msg)
@@ -189,23 +205,33 @@ class CellRunner:
         if not pending:
             return None
 
-        cabinet = self.db.get_cabinet(cell.cabinet_id) if cell.cabinet_id is not None else None
-        if cabinet is None:
-            return RunResult(cell.id, RUN_ERROR,
-                             message="Нет кабинета ZZap для досылки.")
-        zcfg = self._zzap_config(cell, cabinet)
-        if zcfg is None:
-            return RunResult(cell.id, RUN_ERROR,
-                             message="Нет API-ключа/кода шаблона для досылки.")
-
         file_path = Path(pending["file"])
         file_name = pending.get("file_name", file_path.name)
+
+        if cell.target == TARGET_EMAIL:
+            ecfg, why = self._email_config(cell)
+            if ecfg is None:
+                return RunResult(cell.id, RUN_ERROR,
+                                 message=f"Досылка невозможна: {why}")
+            send = lambda: self._email_sender(ecfg, file_path, file_name)  # noqa: E731
+        else:
+            cabinet = (self.db.get_cabinet(cell.cabinet_id)
+                       if cell.cabinet_id is not None else None)
+            if cabinet is None:
+                return RunResult(cell.id, RUN_ERROR,
+                                 message="Нет кабинета ZZap для досылки.")
+            zcfg = self._zzap_config(cell, cabinet)
+            if zcfg is None:
+                return RunResult(cell.id, RUN_ERROR,
+                                 message="Нет API-ключа/кода шаблона для досылки.")
+            send = lambda: self._uploader(zcfg, file_path, file_name)  # noqa: E731
+
         rows = pending.get("rows", "?")          # carried over from the original FAIL
         rows_sent = rows if isinstance(rows, int) else None
         run_id = self.db.add_run(
             RunHistory(cell_id=cell.id, started_at=self._now(), status=RUN_RUNNING))
         try:
-            data = self._uploader(zcfg, file_path, file_name)
+            data = send()
         except Exception as e:  # noqa: BLE001
             reason = error_text(e)
             delivery.journal(RUN_FAIL, f"повторная отправка не удалась: {reason}")
@@ -276,7 +302,13 @@ class CellRunner:
 
     def _build(self, cell: Cell) -> tuple[Path, int]:
         conn = self._connection_for(cell)
-        if cell.cabinet_id is None or self.db.get_cabinet(cell.cabinet_id) is None:
+        if cell.target == TARGET_EMAIL:
+            if (cell.email_account_id is None
+                    or self.db.get_email_account(cell.email_account_id) is None):
+                raise ValueError("У ячейки не выбран почтовый ящик для отправки.")
+            if not parse_recipients(cell.email_to):
+                raise ValueError("У ячейки не указан адрес получателя прайса.")
+        elif cell.cabinet_id is None or self.db.get_cabinet(cell.cabinet_id) is None:
             raise ValueError("У ячейки не выбран кабинет ZZap.")
 
         rows = self._rows_for(cell, conn)
@@ -286,18 +318,33 @@ class CellRunner:
 
     def _upload(self, cell: Cell, delivery: Delivery, run_id: int,
                 file_path: Path, rows_built: int) -> RunResult:
-        cabinet = self.db.get_cabinet(cell.cabinet_id)
-        zcfg = self._zzap_config(cell, cabinet)
-        if zcfg is None:
-            # Can't send (no key / no template) — not transient, so ERROR not FAIL.
-            # code_templ is checkable without decrypting, so disambiguate off it.
-            msg = ("У ячейки не задан код шаблона ZZap (code_templ)." if not cell.code_templ
-                   else "У кабинета ZZap не задан API-ключ.")
-            delivery.journal(RUN_ERROR, msg)
-            self.db.finish_run(run_id, self._now(), RUN_ERROR,
-                               rows_note=str(rows_built), message=msg)
-            return RunResult(cell.id, RUN_ERROR, rows_built=rows_built,
-                             file_path=str(file_path), run_id=run_id, message=msg)
+        # Resolve the delivery channel (ZZap upload vs e-mail attachment). A missing
+        # config (no key / no template / no mailbox) is ERROR, not FAIL — retrying
+        # can't conjure a secret.
+        if cell.target == TARGET_EMAIL:
+            ecfg, why = self._email_config(cell)
+            if ecfg is None:
+                delivery.journal(RUN_ERROR, why)
+                self.db.finish_run(run_id, self._now(), RUN_ERROR,
+                                   rows_note=str(rows_built), message=why)
+                return RunResult(cell.id, RUN_ERROR, rows_built=rows_built,
+                                 file_path=str(file_path), run_id=run_id, message=why)
+            send = lambda: self._email_sender(ecfg, file_path, file_path.name)  # noqa: E731
+            success_msg = "Отправлено на почту: " + ", ".join(ecfg.to_addrs) + "."
+        else:
+            cabinet = self.db.get_cabinet(cell.cabinet_id)
+            zcfg = self._zzap_config(cell, cabinet)
+            if zcfg is None:
+                # code_templ is checkable without decrypting, so disambiguate off it.
+                msg = ("У ячейки не задан код шаблона ZZap (code_templ)."
+                       if not cell.code_templ else "У кабинета ZZap не задан API-ключ.")
+                delivery.journal(RUN_ERROR, msg)
+                self.db.finish_run(run_id, self._now(), RUN_ERROR,
+                                   rows_note=str(rows_built), message=msg)
+                return RunResult(cell.id, RUN_ERROR, rows_built=rows_built,
+                                 file_path=str(file_path), run_id=run_id, message=msg)
+            send = lambda: self._uploader(zcfg, file_path, file_path.name)  # noqa: E731
+            success_msg = "Загружено в ZZap."
 
         # Phase 4: skip the POST entirely when the network is known-down — stage the
         # built file for the flush pass instead of provoking a guaranteed FAIL.
@@ -307,10 +354,11 @@ class CellRunner:
                                        "Нет подключения к сети.")
 
         try:
-            data = self._uploader(zcfg, file_path, file_path.name)
-        except ZzapPermanentError as e:
-            # Permanent (bad key / wrong url / rejected content): retrying won't help —
-            # surface the actionable RU message as ERROR, don't keep a pending file.
+            data = send()
+        except (ZzapPermanentError, EmailPermanentError) as e:
+            # Permanent (bad key/password / wrong url / rejected content or address):
+            # retrying won't help — surface the actionable RU message as ERROR,
+            # don't keep a pending file.
             reason = error_text(e)
             log.warning("Cell %s upload rejected (permanent): %s", cell.id, reason)
             delivery.journal(RUN_ERROR, reason)
@@ -325,10 +373,10 @@ class CellRunner:
 
         delivery.record_success(file_path.name, rows_built, _file_url(data))
         self.db.finish_run(run_id, self._now(), RUN_OK, rows_sent=rows_built,
-                           rows_note=str(rows_built), message="Загружено в ZZap.")
+                           rows_note=str(rows_built), message=success_msg)
         return RunResult(cell.id, RUN_OK, rows_built=rows_built, rows_sent=rows_built,
                          file_path=str(file_path), run_id=run_id, posted=True,
-                         message="Загружено в ZZap.")
+                         message=success_msg)
 
     def _stage_pending(self, cell: Cell, delivery: Delivery, run_id: int,
                        file_path: Path, rows_built: int, reason: str) -> RunResult:
@@ -352,6 +400,30 @@ class CellRunner:
                          file_path=str(file_path), run_id=run_id, message=reason)
 
     # --- helpers ---------------------------------------------------------
+    def _email_config(self, cell: Cell) -> tuple[EmailConfig | None, str]:
+        """EmailConfig for an e-mail cell, or (None, actionable RU reason)."""
+        if cell.email_account_id is None:
+            return None, "У ячейки не выбран почтовый ящик для отправки."
+        account = self.db.get_email_account(cell.email_account_id)
+        if account is None:
+            return None, "Почтовый ящик ячейки не найден."
+        recipients = parse_recipients(cell.email_to)
+        if not recipients:
+            return None, "У ячейки не указан адрес получателя прайса."
+        if not account.smtp_host or not account.login:
+            return None, ("У почтового ящика не заданы SMTP-сервер или логин — "
+                          "проверьте настройки на вкладке «Почта».")
+        password = self.db.get_email_account_password(account.id)
+        if not password:
+            return None, ("У почтового ящика не задан пароль — введите его на "
+                          "вкладке «Почта» (для Mail.ru/Яндекс/Gmail — пароль "
+                          "приложения).")
+        return EmailConfig(
+            smtp_host=account.smtp_host, smtp_port=account.smtp_port,
+            security=account.security, login=account.login, password=password,
+            from_addr=account.from_addr or account.login,
+            to_addrs=recipients, subject=cell.email_subject), ""
+
     def _zzap_config(self, cell: Cell, cabinet) -> ZzapConfig | None:
         api_key = self.db.get_cabinet_api_key(cabinet.id)
         if not api_key or not cell.code_templ:

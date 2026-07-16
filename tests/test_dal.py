@@ -16,7 +16,7 @@ def db(tmp_path):
 
 def test_schema_version_applied(db):
     version = db._conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 2
+    assert version == 3
 
 
 def test_cabinet_crud_secret_encrypted_at_rest(db):
@@ -99,18 +99,34 @@ def test_migrate_v1_db_adds_odata_columns_and_keeps_data(tmp_path):
             usr TEXT NOT NULL DEFAULT '', password_enc BLOB,
             is_default INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE cell (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            connection_id INTEGER,
+            cabinet_id INTEGER,
+            code_templ INTEGER NOT NULL,
+            price_type TEXT NOT NULL DEFAULT '',
+            warehouses TEXT NOT NULL DEFAULT '[]',
+            exclusion_list_id INTEGER,
+            include_header INTEGER NOT NULL DEFAULT 0,
+            columns TEXT NOT NULL DEFAULT '{"producer":1,"number":2,"name":3,"quantity":4,"price":5}'
+        );
         """)
     raw.execute(
         "INSERT INTO connection_1c (name, kind, srvr, ref, usr, password_enc, is_default)"
         " VALUES ('legacy','server','Serv1C','ut2025','Натали', ?, 1)",
         (FakeCipher().encrypt("p@ss"),))
+    raw.execute(
+        "INSERT INTO cell (name, enabled, code_templ, price_type, warehouses)"
+        " VALUES ('old cell', 1, 330017019, 'ZZap', '[\"W\"]')")
     raw.execute("PRAGMA user_version = 1")
     raw.commit()
     raw.close()
 
     database = Database(path, cipher=FakeCipher())
     try:
-        assert database._conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert database._conn.execute("PRAGMA user_version").fetchone()[0] == 3
         cols = {r["name"] for r in
                 database._conn.execute("PRAGMA table_info(connection_1c)")}
         assert {"source", "odata_base_url", "odata_nomenclature_query",
@@ -120,6 +136,12 @@ def test_migrate_v1_db_adds_odata_columns_and_keeps_data(tmp_path):
         assert conn is not None and conn.name == "legacy"
         assert conn.source == "com"                      # defaulted for old rows
         assert database.get_connection_password(conn.id) == "p@ss"
+        # v3: the old cell survives with its behaviour unchanged (target='zzap')
+        cells = database.list_cells()
+        assert len(cells) == 1 and cells[0].name == "old cell"
+        assert cells[0].target == "zzap"
+        assert cells[0].email_account_id is None and cells[0].email_to == ""
+        assert database.list_email_accounts() == []      # v3 table exists and is empty
     finally:
         database.close()
 

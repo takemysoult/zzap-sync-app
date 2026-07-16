@@ -41,6 +41,20 @@ class Cabinet:
 
 
 @dataclass
+class EmailAccount:
+    """One SMTP mailbox (the «свой ящик» the user logs into). Cells with
+    target='email' reference an account; the SMTP password is DPAPI-encrypted."""
+    id: int | None = None
+    name: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 465
+    security: str = "ssl"         # 'ssl' | 'starttls' | 'none'
+    login: str = ""               # e-mail address used to authenticate (and as From)
+    from_addr: str = ""           # optional explicit From; empty = login
+    has_password: bool = False    # whether password_enc is set
+
+
+@dataclass
 class ExclusionList:
     id: int | None = None
     name: str = ""
@@ -62,6 +76,12 @@ class Cell:
     columns: dict[str, int] = field(
         default_factory=lambda: {"producer": 1, "number": 2, "name": 3,
                                  "quantity": 4, "price": 5})
+    # Delivery target: 'zzap' (cabinet_id + code_templ) or 'email' (the built XLSX is
+    # e-mailed as an attachment from email_account_id's mailbox to email_to).
+    target: str = "zzap"          # 'zzap' | 'email'
+    email_account_id: int | None = None
+    email_to: str = ""            # recipients, comma/semicolon/space separated
+    email_subject: str = ""       # empty = default subject with the current date
 
 
 @dataclass

@@ -28,6 +28,7 @@ from .context import AppContext
 from .screens.cabinets import CabinetsScreen
 from .screens.cells import CellsScreen
 from .screens.connection import ConnectionScreen
+from .screens.email_accounts import EmailAccountsScreen
 from .screens.settings import SettingsScreen
 from .screens.status import StatusScreen
 from .workers import AsyncRunner
@@ -55,12 +56,14 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.connection = ConnectionScreen(ctx, self.runner)
         self.cabinets = CabinetsScreen(ctx)
+        self.email_accounts = EmailAccountsScreen(ctx, self.runner)
         self.cells = CellsScreen(ctx, self.runner, scheduler_service)
         self.settings = SettingsScreen(ctx, scheduler_service, self.autostart)
         self.status = StatusScreen(ctx)
 
         self.tabs.addTab(self.connection, "Подключение 1С")
         self.tabs.addTab(self.cabinets, "Кабинеты ZZap")
+        self.tabs.addTab(self.email_accounts, "Почта")
         self.tabs.addTab(self.cells, "Ячейки")
         self.tabs.addTab(self.settings, "Настройки")
         self.tabs.addTab(self.status, "Журнал")
@@ -143,6 +146,8 @@ class MainWindow(QMainWindow):
             self.cells.reload()
         elif widget is self.status:
             self.status.reload()
+        elif widget is self.email_accounts:
+            self.email_accounts.reload()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         # Close-to-tray: hide instead of quit while the background is running.
