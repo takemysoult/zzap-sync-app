@@ -126,6 +126,17 @@ def main(argv: list[str] | None = None) -> int:
     # attributes must be set BEFORE the QApplication is constructed.
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    # Дробный масштаб Windows (125%/150%) применяем КАК ЕСТЬ (политика Qt6).
+    # Политика Qt5 по умолчанию округляет масштаб, из-за чего метрики шрифта и
+    # виджетов расходятся — текст вкладок обрезается по верху.
+    try:
+        from PySide2.QtGui import QGuiApplication
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    except AttributeError:  # на всякий случай для более старых сборок Qt
+        pass
+    # Убрать бесполезную кнопку «?» (контекстная справка) из заголовков диалогов.
+    QApplication.setAttribute(Qt.AA_DisableWindowContextHelpButton, True)
     app = QApplication(sys.argv)
     app.setApplicationName(flavor.display_name())
     app.setOrganizationName(flavor.display_name())

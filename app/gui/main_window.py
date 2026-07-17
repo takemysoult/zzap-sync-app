@@ -53,6 +53,8 @@ class MainWindow(QMainWindow):
         self._allow_close = False         # set by "Выход" for a real quit
         self.setWindowTitle(flavor.window_title())
         self.resize(900, 680)
+        # Не дать ужать окно до состояния, когда вкладки уезжают за край.
+        self.setMinimumSize(760, 540)
 
         # Каждый флейвор показывает только СВОЙ канал доставки: у «ZZap Sync» есть
         # кабинеты ZZap (и нет «Почты»), у «Рассылки прайса» — наоборот.

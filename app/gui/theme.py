@@ -64,7 +64,9 @@ QTabWidget::pane {{
 }}
 QTabBar::tab {{
     background: transparent; color: {MUTED};
-    padding: 8px 18px; margin-right: 2px;
+    /* Запас по вертикали: при дробном DPI-масштабе Windows высота строки шрифта
+       может выйти чуть больше расчётной — без запаса верх букв обрезается. */
+    padding: 10px 16px; margin-right: 2px; min-height: 18px;
     border: none; border-bottom: 2px solid transparent; font-weight: 600;
 }}
 QTabBar::tab:selected {{ color: {PRIMARY}; border-bottom: 2px solid {PRIMARY}; }}
