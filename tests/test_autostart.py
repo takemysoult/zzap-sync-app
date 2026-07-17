@@ -5,8 +5,10 @@ tested against a fake backend, per the Phase 4 "registry mocked" requirement.
 """
 from __future__ import annotations
 
-from app.services.autostart import (APP_VALUE_NAME, MINIMIZED_FLAG, AutostartManager,
-                                     launch_command)
+from app.services.autostart import (MINIMIZED_FLAG, AutostartManager,
+                                     app_value_name, launch_command)
+
+APP_VALUE_NAME = app_value_name()   # default flavor ('zzap') -> "ZZapSync"
 
 
 class FakeBackend:

@@ -19,6 +19,7 @@ import threading
 from PySide2.QtCore import QTimer
 from PySide2.QtWidgets import QMainWindow, QSystemTrayIcon, QTabWidget, QWidget
 
+from .. import flavor
 from ..services.autostart import AutostartManager
 from ..services.scheduler import SchedulerService
 from ..services.watchdog_task import SETTING_WATCHDOG_ENABLED
@@ -50,20 +51,25 @@ class MainWindow(QMainWindow):
         self.tray = None                 # created by start_background (if tray available)
         self._background_active = False   # close-to-tray only after start_background
         self._allow_close = False         # set by "Выход" for a real quit
-        self.setWindowTitle("ZZap Sync — синхронизация прайсов 1С → ZZap")
+        self.setWindowTitle(flavor.window_title())
         self.resize(900, 680)
 
+        # Каждый флейвор показывает только СВОЙ канал доставки: у «ZZap Sync» есть
+        # кабинеты ZZap (и нет «Почты»), у «Рассылки прайса» — наоборот.
+        email = flavor.is_email()
         self.tabs = QTabWidget()
         self.connection = ConnectionScreen(ctx, self.runner)
-        self.cabinets = CabinetsScreen(ctx)
-        self.email_accounts = EmailAccountsScreen(ctx, self.runner)
+        self.cabinets = CabinetsScreen(ctx) if not email else None
+        self.email_accounts = EmailAccountsScreen(ctx, self.runner) if email else None
         self.cells = CellsScreen(ctx, self.runner, scheduler_service)
         self.settings = SettingsScreen(ctx, scheduler_service, self.autostart)
         self.status = StatusScreen(ctx)
 
         self.tabs.addTab(self.connection, "Подключение 1С")
-        self.tabs.addTab(self.cabinets, "Кабинеты ZZap")
-        self.tabs.addTab(self.email_accounts, "Почта")
+        if self.cabinets is not None:
+            self.tabs.addTab(self.cabinets, "Кабинеты ZZap")
+        if self.email_accounts is not None:
+            self.tabs.addTab(self.email_accounts, "Почта")
         self.tabs.addTab(self.cells, "Ячейки")
         self.tabs.addTab(self.settings, "Настройки")
         self.tabs.addTab(self.status, "Журнал")
@@ -146,7 +152,7 @@ class MainWindow(QMainWindow):
             self.cells.reload()
         elif widget is self.status:
             self.status.reload()
-        elif widget is self.email_accounts:
+        elif self.email_accounts is not None and widget is self.email_accounts:
             self.email_accounts.reload()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
@@ -163,8 +169,8 @@ class MainWindow(QMainWindow):
         if self.tray is None or self.ctx.db.get_bool(SETTING_TRAY_HINT_SHOWN):
             return
         self.tray.tray.showMessage(
-            "ZZap Sync продолжает работать",
-            "Приложение свёрнуто в трей и выгружает по расписанию. "
+            f"{flavor.display_name()} продолжает работать",
+            "Приложение свёрнуто в трей и отправляет по расписанию. "
             "Для выхода: правый клик по значку → «Выход».",
             QSystemTrayIcon.Information, 6000)
         self.ctx.db.set_bool(SETTING_TRAY_HINT_SHOWN, True)

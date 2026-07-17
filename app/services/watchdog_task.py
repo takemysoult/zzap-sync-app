@@ -17,11 +17,18 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+from .. import flavor
+
 log = logging.getLogger(__name__)
 
 SETTING_WATCHDOG_ENABLED = "watchdog_enabled"
-TASK_NAME = "ZZapSync Watchdog"
 WATCHDOG_FLAG = "--watchdog"
+
+
+def task_name() -> str:
+    """Имя задачи Планировщика — своё у каждого флейвора, чтобы сторожа двух
+    приложений (ZZap Sync и «Рассылка прайса») не затирали друг друга."""
+    return f"{flavor.app_id()} Watchdog"
 # Liveness check cadence (минуты). Частая проверка нужна, чтобы быстро поднять
 # приложение, если оно зависло/упало — а не ждать целый интервал выгрузки.
 WATCHDOG_EVERY_MINUTES = 15
@@ -49,7 +56,7 @@ def watchdog_command() -> str:
 
 
 def build_create_args(command: str) -> list[str]:
-    return ["schtasks", "/create", "/tn", TASK_NAME, "/tr", command,
+    return ["schtasks", "/create", "/tn", task_name(), "/tr", command,
             "/sc", "MINUTE", "/mo", str(WATCHDOG_EVERY_MINUTES), "/it", "/f"]
 
 
@@ -61,7 +68,7 @@ def install(command: str | None = None, *, runner: Runner = _default_runner) -> 
 
 
 def remove(*, runner: Runner = _default_runner) -> bool:
-    return runner(["schtasks", "/delete", "/tn", TASK_NAME, "/f"]) == 0
+    return runner(["schtasks", "/delete", "/tn", task_name(), "/f"]) == 0
 
 
 def apply(enabled: bool, *, runner: Runner = _default_runner) -> None:

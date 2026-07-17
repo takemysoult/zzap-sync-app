@@ -16,9 +16,15 @@ import winerror
 from PySide2.QtCore import QObject, Signal
 from PySide2.QtNetwork import QLocalServer, QLocalSocket
 
+from . import flavor
+
 log = logging.getLogger(__name__)
 
-_KEY = "ZZapSyncSingleton"
+
+def default_key() -> str:
+    """Имя мьютекса зависит от флейвора: два приложения (ZZap Sync и «Рассылка
+    прайса») не должны считать друг друга вторым экземпляром."""
+    return f"{flavor.app_id()}Singleton"
 
 
 class SingleInstance(QObject):
@@ -27,9 +33,10 @@ class SingleInstance(QObject):
 
     activated = Signal()   # emitted in the primary when a second launch pings it
 
-    def __init__(self, key: str = _KEY, parent: QObject | None = None) -> None:
+    def __init__(self, key: str | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._key = key
+        self._key = key or default_key()
+        key = self._key
         # Держим хэндл всю жизнь процесса; ERROR_ALREADY_EXISTS = имя уже занято
         # работающим экземпляром (проверять сразу после CreateMutex).
         self._mutex = win32event.CreateMutex(None, False, key)

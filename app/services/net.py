@@ -14,14 +14,14 @@ import logging
 import os
 import socket
 
+from .. import flavor
+
 log = logging.getLogger(__name__)
 
-DEFAULT_HOST = "b52-api.zzap.pro"
-DEFAULT_PORT = 443
 DEFAULT_TIMEOUT = 3.0
 
 
-def is_online(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
+def is_online(host: str | None = None, port: int | None = None,
               timeout: float = DEFAULT_TIMEOUT) -> bool:
     """True, если до ``host:port`` удаётся открыть TCP-соединение за ``timeout`` сек.
 
@@ -31,6 +31,11 @@ def is_online(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     # (для обслуживания/диагностики — выгрузка соберётся, но не уйдёт в ZZap, а отложится).
     if os.environ.get("ZZAP_FORCE_OFFLINE"):
         return False
+    if host is None or port is None:
+        # Хост проверки зависит от флейвора: ZZap API либо крупный почтовый хост.
+        default_host, default_port = flavor.online_probe_host()
+        host = host or default_host
+        port = port or default_port
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True

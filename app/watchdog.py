@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-from . import paths
+from . import flavor, paths
 
 log = logging.getLogger(__name__)
 
@@ -111,12 +111,13 @@ def _default_notify(text: str) -> None:
         # ВАЖНО: НЕ блокирующее модальное окно. Раньше MessageBoxW ждал нажатия «ОК» и
         # держал процесс сторожа живым (зависший процесс + окно копились при перезапусках).
         # MessageBoxTimeoutW сам закрывается через 20с, поэтому сторож не зависает.
+        title = flavor.display_name()
         if hasattr(user32, "MessageBoxTimeoutW"):
-            user32.MessageBoxTimeoutW(0, text, "ZZap Sync", flags, 0, 20000)
+            user32.MessageBoxTimeoutW(0, text, title, flags, 0, 20000)
         else:  # запасной путь: показать в демон-потоке, не блокируя выход процесса
             import threading
             threading.Thread(
-                target=lambda: user32.MessageBoxW(0, text, "ZZap Sync", flags),
+                target=lambda: user32.MessageBoxW(0, text, title, flags),
                 daemon=True).start()
     except Exception as e:  # noqa: BLE001
         log.warning("watchdog notify failed: %s", e)
@@ -148,6 +149,6 @@ def run_watchdog(*, now: Callable[[], datetime] = datetime.now,
         relaunch()
     except Exception as e:  # noqa: BLE001
         log.error("watchdog: не удалось перезапустить: %s", e)
-    notify("ZZap Sync не отвечал и был перезапущен автоматически.\n"
+    notify(f"{flavor.display_name()} не отвечал и был перезапущен автоматически.\n"
            "Если это повторяется — сообщите администратору.")
     return 1

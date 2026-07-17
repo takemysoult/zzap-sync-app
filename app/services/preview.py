@@ -51,7 +51,7 @@ def run_preview(cell_id: int, work_dir: str | Path, *,
     except subprocess.TimeoutExpired:
         return PreviewResult(cell_id=cell_id, ok=False,
                              message=("Проверка превысила лимит времени и была "
-                                      "остановлена. В ZZap ничего не отправлено."))
+                                      "остановлена. Ничего не отправлено."))
     except Exception as e:  # noqa: BLE001 - не дать проверке уронить GUI
         return PreviewResult(cell_id=cell_id, ok=False,
                              message=f"Не удалось запустить проверку: {e}")

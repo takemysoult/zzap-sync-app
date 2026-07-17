@@ -358,6 +358,27 @@ Windows DPAPI + PyInstaller, Python 3.12 x64**. Git initialized (`main`).
   Тесты: 191 (было 164), новые test_email_client / test_email_dal /
   test_cell_runner_email + smoke редактора.
 
+### Flavors: отдельное приложение «Рассылка прайса» (2026-07-16, branch email-delivery)
+- Пользователь решил: e-mail-канал — НЕ в ZZap Sync, а **отдельным приложением**. Введён
+  флейвор сборки `app/flavor.py` (env **ZZAP_APP_FLAVOR**: 'zzap' по умолчанию | 'email'):
+  один код → два независимых приложения. Frozen entry `packaging/pricemailer_main.py`
+  ставит env ДО импорта app.*; дочерние процессы наследуют env, dev-запуск:
+  `ZZAP_APP_FLAVOR=email python -m app.gui`.
+- **Изоляция идентичности** (могут стоять/работать на одном ПК одновременно):
+  папка данных `%LOCALAPPDATA%\PriceMailer` (+ `pricemailer.db`), мьютекс
+  `PriceMailerSingleton`, задача «PriceMailer Watchdog», Run-значение `PriceMailer`,
+  своя иконка (зелёная `@`, `packaging/pricemailer.ico`). Всё это — функции от флейвора:
+  `paths.app_data_dir/db_path`, `single_instance.default_key`, `watchdog_task.task_name`,
+  `autostart.app_value_name` (константы `TASK_NAME`/`APP_VALUE_NAME`/`_KEY` УДАЛЕНЫ).
+- **Каждый флейвор показывает только свой канал** (`flavor.forced_target()`):
+  у «ZZap Sync» вкладок 5 (как в v1.1, БЕЗ «Почты»), у «Рассылки прайса» — Подключение
+  1С / Почта / Ячейки / Настройки / Журнал; выбор «Куда отправлять» в редакторе скрыт.
+  `net.is_online` дефолтный хост тоже от флейвора (zzap API vs mail.ru:443).
+- **Packaging:** `pricemailer.spec` (PriceMailer.exe) + `pricemailer.iss`
+  (AppId=PriceMailer, «Рассылка прайса» **1.0.0**, {autopf}\PriceMailer, uninstall чистит
+  свою задачу/автозапуск) + `build_mailer.ps1`. Тексты предпросмотра сделаны
+  канало-нейтральными. Тесты: 199 (`test_flavor.py` — изоляция идентичности).
+
 ### Still open (later phases)
 - **Phase 4 process model — DONE (2026-06-24):** see the Phase 4 subsection above. (Decision was
   locked 2026-06-23: APScheduler inside the app + system tray, NOT the Windows Task Scheduler.)

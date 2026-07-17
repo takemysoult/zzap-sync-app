@@ -79,10 +79,28 @@ def _seed(ctx: AppContext):
     return conn_id, cab_id
 
 
-def test_main_window_builds(qapp, ctx):
+def _tab_titles(win) -> list[str]:
+    return [win.tabs.tabText(i) for i in range(win.tabs.count())]
+
+
+def test_main_window_builds_zzap_flavor(qapp, ctx):
+    # Default flavor «ZZap Sync»: cabinets tab, NO «Почта» (e-mail is the other app).
     _seed(ctx)
     win = MainWindow(ctx)
-    assert win.tabs.count() == 6
+    titles = _tab_titles(win)
+    assert titles == ["Подключение 1С", "Кабинеты ZZap", "Ячейки",
+                      "Настройки", "Журнал"]
+    win.close()
+
+
+def test_main_window_builds_email_flavor(qapp, ctx, monkeypatch):
+    # «Рассылка прайса»: «Почта» instead of the ZZap cabinets.
+    monkeypatch.setenv("ZZAP_APP_FLAVOR", "email")
+    _seed(ctx)
+    win = MainWindow(ctx)
+    titles = _tab_titles(win)
+    assert titles == ["Подключение 1С", "Почта", "Ячейки", "Настройки", "Журнал"]
+    assert win.cabinets is None and win.email_accounts is not None
     win.close()
 
 
@@ -107,7 +125,8 @@ def test_new_cell_editor_defaults_to_disabled(qapp, ctx):
     assert editor.cb_enabled.isChecked() is False
 
 
-def test_cell_editor_email_target_round_trips(qapp, ctx):
+def test_cell_editor_email_target_round_trips(qapp, ctx, monkeypatch):
+    monkeypatch.setenv("ZZAP_APP_FLAVOR", "email")   # почтовый флейвор -> email-поля
     conn_id, cab_id = _seed(ctx)
     acc_id = ctx.db.add_email_account(
         EmailAccount(name="Рабочая", smtp_host="smtp.mail.ru",
@@ -220,7 +239,7 @@ def test_preview_text_is_calm_when_data_looks_sane():
     text, suspicious = _preview_text(result)
     assert suspicious is False
     assert "НЕЛЬЗЯ" not in text
-    assert "В ZZap ничего не отправлено." in text
+    assert "Ничего не отправлено." in text
 
 
 def test_duplicate_banner_lights_up(qapp, ctx):

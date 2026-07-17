@@ -18,6 +18,7 @@ from PySide2.QtCore import QObject, Qt, QTimer, Signal
 from PySide2.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide2.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from .. import flavor
 from .. import paths  # noqa: F401 - kept for parity with other gui modules
 from ..services.scheduler import KIND_FLUSH, RunSummary, SchedulerService
 from . import theme
@@ -44,7 +45,7 @@ class TrayController(QObject):
         self._bridge.run_finished.connect(self._on_run_finished)
 
         self.tray = QSystemTrayIcon(self._make_icon(), self)
-        self.tray.setToolTip("ZZap Sync — синхронизация прайсов 1С → ZZap")
+        self.tray.setToolTip(flavor.window_title())
         self._menu = QMenu()
         self._menu.aboutToShow.connect(self._rebuild_menu)  # keep the cell list fresh
         self.tray.setContextMenu(self._menu)
@@ -133,14 +134,14 @@ class TrayController(QObject):
             msg = f"Выгрузка завершена: отправлено {summary.posted}, ошибок {bad}."
         icon = (QSystemTrayIcon.Warning if bad
                 else QSystemTrayIcon.Information)
-        self.tray.showMessage("ZZap Sync", msg, icon, 5000)
+        self.tray.showMessage(flavor.display_name(), msg, icon, 5000)
         # Refresh the open window so the journal/cells reflect the run.
         if self.window.isVisible():
             self.window.cells.reload()
             self.window.status.reload()
 
     def _info(self, message: str) -> None:
-        self.tray.showMessage("ZZap Sync", message,
+        self.tray.showMessage(flavor.display_name(), message,
                               QSystemTrayIcon.Information, 3000)
 
     # --- icon (painted at runtime; a real asset arrives with Phase 6) -----
@@ -155,6 +156,6 @@ class TrayController(QObject):
         p.drawRoundedRect(4, 4, 56, 56, 14, 14)
         p.setPen(QColor("#FFFFFF"))
         p.setFont(QFont(theme.UI_FAMILY, 30, QFont.Bold))
-        p.drawText(pm.rect(), Qt.AlignCenter, "Z")
+        p.drawText(pm.rect(), Qt.AlignCenter, flavor.tray_letter())
         p.end()
         return QIcon(pm)

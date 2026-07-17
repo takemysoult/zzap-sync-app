@@ -20,12 +20,19 @@ import sys
 from pathlib import Path
 from typing import Protocol
 
+from .. import flavor
+
 log = logging.getLogger(__name__)
 
 SETTING_AUTOSTART = "autostart"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-APP_VALUE_NAME = "ZZapSync"
 MINIMIZED_FLAG = "--minimized"
+
+
+def app_value_name() -> str:
+    """Имя значения в Run-ключе — своё у каждого флейвора (ZZapSync / PriceMailer),
+    чтобы оба приложения могли автозапускаться независимо."""
+    return flavor.app_id()
 
 
 class RegistryBackend(Protocol):
@@ -68,9 +75,9 @@ class WinRegBackend:
 
 class AutostartManager:
     def __init__(self, backend: RegistryBackend | None = None,
-                 value_name: str = APP_VALUE_NAME) -> None:
+                 value_name: str | None = None) -> None:
         self._backend = backend or WinRegBackend()
-        self._value_name = value_name
+        self._value_name = value_name or app_value_name()
 
     def is_enabled(self) -> bool:
         return self._backend.get(self._value_name) is not None

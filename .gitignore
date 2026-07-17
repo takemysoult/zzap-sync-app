@@ -19,6 +19,7 @@ build/
 dist/
 *.spec
 !packaging/zzapsync.spec   # the PyInstaller spec is source — keep it tracked
+!packaging/pricemailer.spec  # spec of the standalone «Рассылка прайса» flavor
 
 # VC++ redistributable bundled into the installer — downloaded at build time
 # (see packaging/build.ps1), not source. ~25 MB, must not bloat the repo.

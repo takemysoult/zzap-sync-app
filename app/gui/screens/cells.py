@@ -73,7 +73,7 @@ class CellsScreen(QWidget):
         self.btn_preview = QPushButton("Собрать файл без отправки")
         self.btn_preview.setToolTip(
             "Проверка: собрать XLSX из 1С и показать статистику. "
-            "В ZZap НИЧЕГО не отправляется.")
+            "НИЧЕГО никуда не отправляется.")
         self.btn_preview.clicked.connect(self._preview_selected)
         self.btn_run = QPushButton("Запустить выбранную")
         self.btn_run.clicked.connect(self._run_selected)
@@ -283,7 +283,7 @@ class CellsScreen(QWidget):
         text, suspicious = _preview_text(result)
         theme.set_status(
             self.lbl_status,
-            f"Проверка: строк {result.rows}, файл собран, в ZZap ничего не отправлено.",
+            f"Проверка: строк {result.rows}, файл собран, ничего не отправлено.",
             "error" if suspicious else "ok")
         if suspicious:
             QMessageBox.warning(self, "Проверка: данные выглядят неверными", text)
@@ -340,7 +340,8 @@ def _preview_text(result: PreviewResult) -> tuple[str, bool]:
             f"⚠ У ВСЕХ {rows} строк нулевое поле «{broken}».\n"
             "Скорее всего, в запросе OData неверно указано имя поля "
             "(например, остаток называется «ВНаличииBalance», а не «КоличествоBalance»).\n"
-            "Такой файл отправлять НЕЛЬЗЯ — он затрёт шаблон ZZap нулями.\n")
+            "Такой файл отправлять НЕЛЬЗЯ — все значения в нём нулевые "
+            "(шаблон ZZap он затёр бы нулями).\n")
     elif rows == 0:
         lines.append("⚠ Получено 0 строк — отправка была бы отклонена защитой.\n")
 
@@ -348,7 +349,7 @@ def _preview_text(result: PreviewResult) -> tuple[str, bool]:
     lines.append(f"из них с нулевым количеством: {result.zero_quantity}")
     lines.append(f"из них с нулевой ценой: {result.zero_price}")
     lines.append(f"\nФайл: {result.file_path}")
-    lines.append("\nВ ZZap ничего не отправлено.")
+    lines.append("\nНичего не отправлено.")
 
     if result.sample:
         lines.append("\nПервые строки (производитель | номер | наименование | кол-во | цена):")

@@ -18,6 +18,7 @@ from PySide2.QtWidgets import (QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
                                QListWidgetItem, QMessageBox, QPlainTextEdit,
                                QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
+from ... import flavor
 from ...db.models import Cell
 from ...services.connection import ConnectionManager, Discovery
 from .. import theme
@@ -104,11 +105,11 @@ class CellEditor(QDialog):
 
         self.ed_name = QLineEdit()
         self.cb_enabled = QCheckBox("Ячейка включена (участвует в авто-выгрузке)")
-        # Delivery channel: upload to a ZZap template or e-mail the XLSX.
+        # Delivery channel is FIXED by the app flavor («ZZap Sync» -> zzap,
+        # «Рассылка прайса» -> email); the combo stays hidden and just mirrors it.
         self.cmb_target = QComboBox()
         self.cmb_target.addItem("Кабинет ZZap", "zzap")
         self.cmb_target.addItem("На почту (Excel во вложении)", "email")
-        self.cmb_target.currentIndexChanged.connect(self._sync_target_ui)
         self.cmb_cabinet = QComboBox()
         self.cmb_conn = QComboBox()
         self.sp_templ = QSpinBox()
@@ -239,7 +240,8 @@ class CellEditor(QDialog):
         self._sync_target_ui()
 
     def _current_target(self) -> str:
-        return self.cmb_target.currentData() or "zzap"
+        """Delivery channel of this app flavor (fixed; the combo only mirrors it)."""
+        return flavor.forced_target()
 
     def _set_row_visible(self, widget, visible: bool) -> None:
         """Show/hide a QFormLayout field together with its label (Qt5 has no
@@ -250,8 +252,9 @@ class CellEditor(QDialog):
             label.setVisible(visible)
 
     def _sync_target_ui(self) -> None:
-        """Toggle the ZZap-vs-почта field sets; the checklist is ZZap-specific."""
+        """Show only this flavor's field set; the checklist is ZZap-specific."""
         email = self._current_target() == "email"
+        self._set_row_visible(self.cmb_target, False)   # канал задан флейвором
         for w in (self.cmb_cabinet, self.sp_templ):
             self._set_row_visible(w, not email)
         for w in (self.cmb_email, self.ed_email_to, self.ed_email_subject):

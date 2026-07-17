@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 from app.services import watchdog_task
-from app.services.watchdog_task import (TASK_NAME, WATCHDOG_EVERY_MINUTES, WATCHDOG_FLAG,
-                                        build_create_args, watchdog_command)
+from app.services.watchdog_task import (WATCHDOG_EVERY_MINUTES, WATCHDOG_FLAG,
+                                        build_create_args, task_name,
+                                        watchdog_command)
 
 
 def test_build_create_args_uses_minute_cadence_and_command():
     args = build_create_args('"C:\\x\\ZZapSync.exe" --watchdog')
     assert "schtasks" == args[0] and "/create" in args
-    assert TASK_NAME in args
+    assert task_name() in args
     assert args[args.index("/sc") + 1] == "MINUTE"
     assert args[args.index("/mo") + 1] == str(WATCHDOG_EVERY_MINUTES)
     assert any("--watchdog" in a for a in args)

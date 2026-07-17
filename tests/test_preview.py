@@ -64,7 +64,7 @@ def test_run_preview_maps_timeout(tmp_path):
 
     assert res.ok is False
     assert "лимит" in res.message
-    assert "ничего не отправлено" in res.message
+    assert "не отправлено" in res.message.lower()
 
 
 def test_run_preview_handles_corrupt_result(tmp_path):

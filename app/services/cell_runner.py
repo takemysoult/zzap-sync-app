@@ -276,7 +276,7 @@ class CellRunner:
             zero_price=sum(1 for r in rows if not r.price),
             file_path=str(file_path),
             sample=[[r.producer, r.number, r.name, r.quantity, r.price] for r in rows[:10]],
-            message="Файл собран. В ZZap ничего не отправлено.")
+            message="Файл собран — ничего не отправлено.")
 
     # --- build (everything up to and including the XLSX) ------------------
     def _connection_for(self, cell: Cell):

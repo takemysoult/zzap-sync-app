@@ -17,7 +17,7 @@ import multiprocessing
 import os
 import sys
 
-from .. import paths
+from .. import flavor, paths
 from ..logging_setup import setup_logging
 from ..services.net import is_online
 from ..services.scheduler import SchedulerService
@@ -108,8 +108,9 @@ def main(argv: list[str] | None = None) -> int:
     # стеков в logs/stall.log. Хлебные крошки ниже показывают, до какого шага дошёл старт.
     from .. import diagnostics
     diagnostics.arm_startup_guard()
-    log.info("=== ZZap Sync GUI старт: pid=%s frozen=%s minimized=%s ===",
-             os.getpid(), getattr(sys, "frozen", False), args.minimized)
+    log.info("=== %s GUI старт: pid=%s frozen=%s minimized=%s flavor=%s ===",
+             flavor.display_name(), os.getpid(), getattr(sys, "frozen", False),
+             args.minimized, flavor.flavor())
     diagnostics.start_resource_sampler()
 
     log.info("Старт: импортирую Qt…")
@@ -126,8 +127,8 @@ def main(argv: list[str] | None = None) -> int:
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
-    app.setApplicationName("ZZap Sync")
-    app.setOrganizationName("ZZap Sync")
+    app.setApplicationName(flavor.display_name())
+    app.setOrganizationName(flavor.display_name())
     app.setQuitOnLastWindowClosed(False)  # close-to-tray must not quit the app
     apply_theme(app)
 
@@ -143,7 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     single = SingleInstance()
     if not single.is_primary():
         single.ping_primary()
-        log.info("ZZap Sync уже запущен — открываю существующее окно и выхожу.")
+        log.info("%s уже запущен — открываю существующее окно и выхожу.",
+                 flavor.display_name())
         return 0
 
     log.info("Старт: открываю базу и планировщик…")
