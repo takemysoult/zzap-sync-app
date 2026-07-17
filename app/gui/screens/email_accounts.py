@@ -80,8 +80,6 @@ class EmailAccountDialog(QDialog):
         for label, value in _SECURITY_ITEMS:
             self.cmb_security.addItem(label, value)
         self._select_security(account.security if account else "ssl")
-        self.ed_from = QLineEdit(account.from_addr if account else "")
-        self.ed_from.setPlaceholderText("пусто = как логин")
 
         hint = QLabel(_PASSWORD_HINT)
         hint.setWordWrap(True)
@@ -95,7 +93,6 @@ class EmailAccountDialog(QDialog):
         form.addRow("SMTP-сервер", self.ed_host)
         form.addRow("Порт", self.sp_port)
         form.addRow("Защита", self.cmb_security)
-        form.addRow("Отправитель («От кого»)", self.ed_from)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setProperty("class", "primary")
@@ -136,6 +133,8 @@ class EmailAccountDialog(QDialog):
         self.accept()
 
     def result_account(self) -> EmailAccount:
+        # «От кого» из UI убран (сбивал с толку): письма всегда идут от логина.
+        # Поле в модели/БД сохранено на будущее (алиасы, корпоративные серверы).
         return EmailAccount(
             id=self._account.id if self._account else None,
             name=self.ed_name.text().strip(),
@@ -143,7 +142,7 @@ class EmailAccountDialog(QDialog):
             smtp_port=int(self.sp_port.value()),
             security=self.cmb_security.currentData() or "ssl",
             login=self.ed_login.text().strip(),
-            from_addr=self.ed_from.text().strip(),
+            from_addr=self._account.from_addr if self._account else "",
         )
 
     def new_password(self) -> str | None:
